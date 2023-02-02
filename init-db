@@ -113,7 +113,7 @@ class DBWrapper(object):
 		except Exception as e:
 			fail(f"Failed to create the target file at [{self.__path}]:\n{traceback.format_exc()}")
 
-	def renderString(self, string):
+	def output(self, string):
 		# Write out to the output file
 		print(f"OUT: {string}")
 		print(string, file=self.__output)
@@ -150,7 +150,7 @@ class DBWrapper(object):
 		pass
 
 	@abstractmethod
-	def renderQuerySQL(self, db, schema, user, query):
+	def renderQuerySQL(self, db, user, query):
 		pass
 
 	def close(self):
@@ -168,20 +168,141 @@ class PSQL_Wrapper(DBWrapper):
 		super().__init__([ "postgres", "psql", "postgresql" ], "postgres")
 
 	def renderAdminPassword(self, adminSpec):
-		print(f"ADMIN PW FOR {self.getName()} IS {adminSpec}")
+		if "password" not in adminSpec:
+			return
+		password = getSecretPassword(adminSpec["password"])
+		self.output("")
+		self.output(f"-- BEGIN: set the root password to [{password}]")
+		self.output(f"ALTER USER postgres WITH PASSWORD '{password}';")
+		self.output(f"-- END: set the root password")
 
 	def renderUserSql(self, userName, userSpec):
-		print(f"USER SQL FOR {self.getName()} FOR {userName}/{userSpec}")
+		if "password" in userSpec:
+			password = getSecretPassword(userSpec["password"])
+		else:
+			password = userName
+
+		roles = []
+		if "roles" in userSpec:
+			roles = userSpec[roles]
+			if type(roles) == str:
+				# Split using commas
+				roles = roles.split(",")
+			elif type(roles) == list:
+				roles = [str(s) for s in roles]
+			elif type(roles) == dict:
+				roles = [str(s) for s in roles.values()]
+
+		# Clean up the roles
+		roles = [s.strip().upper() for s in roles]
+
+		# Remove the "password" role, if present
+		roles = list(filter(lambda r: r.upper().find("PASSWORD") < 0, roles))
+
+		# Pre-pend the password role with the value we want
+		roles = [f"PASSWORD '{password}'"] + roles
+
+		self.output("")
+		self.output(f"-- BEGIN: create the {userName} user")
+		self.output(f"DROP USER IF EXISTS {userName};")
+		self.output(f"CREATE USER {userName} {' '.join(roles)};")
+		self.output(f"-- END: creation of {userName} user")
 
 	def renderDatabaseSql(self, dbName, dbSpec):
-		print(f"DATABASE SQL FOR {self.getName()} FOR {dbName}, OWNED BY {dbSpec}")
+		forceFlag = ""
+		if ("force" in dbSpec) and (bool(dbSpec["force"])):
+			forceFlag = "FORCE"
+
+		self.output("")
+		self.output(f"-- BEGIN: create the {dbName} database")
+		dbName = dbName.replace("'", "''")
+		self.output(f"DROP DATABASE IF EXISTS '{dbName}' {forceFlag};")
+
+		owner = None
+		ownerSpec = ""
+		if ("owner" in dbSpec) and (dbSpec["owner"]):
+			owner = dbSpec["owner"]
+			if type(owner) != str:
+				fail(f"The owner clause for database {dbName} must be a string with the owner's name ({type(owner)})")
+			ownerSpec = f"OWNER '{owner}'"
+
+		flagSpec = []
+		if ("flags" in dbSpec) and (dbSpec["flags"]):
+			flags = dbSpec["flags"]
+			if type(flags) == str:
+				# Comma-separated values
+				flagSpec = [s.strip() for s in flags.split(",")]
+			elif type(flags) == list:
+				# Independent values
+				flagSpec = [str(s).strip() for s in flags]
+			elif type(flags) == map:
+				# Key-value-pairs
+				for k, v in flags.items():
+					flagSpec += f"{k.upper()} = {v.upper()}"
+
+		flagSpec = list(filter(lambda r: r.upper().find("OWNER") < 0, flagSpec))
+
+		self.output(f"CREATE DATABASE '{dbName}' {ownerSpec} {' '.join(flagSpec)};")
+
+		if KEY_DB_PRIVILEGES in dbSpec:
+			privileges = dbSpec[KEY_DB_PRIVILEGES]
+			if privileges:
+				for u, p in privileges.items():
+					u = self.__quoteUser(str(u))
+					self.output("GRANT")
+					comma = ","
+					# Take a shortcut
+					if "*" in p:
+						p = ["ALL"]
+						comma = ""
+					else:
+						i = 0
+						m = len(p)
+						for pv in p:
+							i += 1
+							if (i >= m):
+								comma = ""
+							self.output(f"\t{p}{comma}")
+					self.output(f"ON DATABASE '{dbName}' TO {u};")
+
+		# We do this last in case specific privileges were granted above
+		if owner:
+			self.output(f"GRANT ALL ON DATABASE '{dbName}' TO {owner} WITH GRANT OPTION;")
+
+		self.output(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
-		print(f"SCHEMA SQL FOR {self.getName()} FOR {dbName}.{schemaName}, OWNED BY {schemaSpec}")
+		self.output("")
+		self.output(f"-- BEGIN: create the {dbName}.{schemaName} schema")
+		dbName = dbName.replace("'", "''")
+		schemaName = schemaName.replace("'", "''")
+		self.output(f"\c '{dbName}'")
+		self.output(f"CREATE SCHEMA IF NOT EXISTS '{schemaName}';")
+		self.output(f"-- END: creation of the {dbName}.{schemaName} schema")
 
-	def renderQuerySQL(self, db, schema, user, query):
-		print(f"QUERY SQL ON {db}, AS {user}, FOR {query}")
+	def renderQuerySQL(self, db, user, query):
+		dbLabel = db
+		if not db:
+			dbLabel = "<current-database>"
+		userLabel = user
+		if not user:
+			userLabel = "<current-user>"
+		self.output(f"-- BEGIN: run query on {dbLabel} as {userLabel}")
 
+		if user:
+			user = user.replace("'", "''")
+			self.output(f"SET SESSION AUTHORIZATION '{user}';")
+
+		if db:
+			db = db.replace("'", "''")
+			self.output(f"\c '{db}'")
+
+		self.output(query + ";")
+
+		if user:
+			self.output("RESET SESSION AUTHORIZATION;")
+
+		self.output(f"-- END: run query on {dbLabel}")
 
 class MySQL_Wrapper(DBWrapper):
 
@@ -203,14 +324,15 @@ class MySQL_Wrapper(DBWrapper):
 		return f"'{u}'@'{h}'"
 
 	def renderAdminPassword(self, adminSpec):
-		if "password" in adminSpec:
-			password = getSecretPassword(adminSpec["password"])
-			self.renderString("")
-			self.renderString(f"-- BEGIN: set the root password to [{password}]")
-			self.renderString(f"ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '{password}';")
-			self.renderString(f"ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '{password}';")
-			self.renderString("FLUSH PRIVILEGES;")
-			self.renderString(f"-- END: set the root password")
+		if "password" not in adminSpec:
+			return
+		password = getSecretPassword(adminSpec["password"])
+		self.output("")
+		self.output(f"-- BEGIN: set the root password to [{password}]")
+		self.output(f"ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '{password}';")
+		self.output(f"ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '{password}';")
+		self.output("FLUSH PRIVILEGES;")
+		self.output(f"-- END: set the root password")
 
 	def renderUserSql(self, userName, userSpec):
 		hosts = []
@@ -230,18 +352,18 @@ class MySQL_Wrapper(DBWrapper):
 
 		for host in hosts:
 			userName = self.__quoteUser(f"{userName}@{host}")
-			self.renderString("")
-			self.renderString(f"-- BEGIN: create the {userName} user")
-			self.renderString(f"DROP USER IF EXISTS {userName};")
-			self.renderString(f"CREATE USER {userName} IDENTIFIED BY '{password}';")
-		self.renderString("FLUSH PRIVILEGES;")
-		self.renderString(f"-- END: creation of {userName} user")
+			self.output("")
+			self.output(f"-- BEGIN: create the {userName} user")
+			self.output(f"DROP USER IF EXISTS {userName};")
+			self.output(f"CREATE USER {userName} IDENTIFIED BY '{password}';")
+		self.output("FLUSH PRIVILEGES;")
+		self.output(f"-- END: creation of {userName} user")
 
 	def renderDatabaseSql(self, dbName, dbSpec):
-		self.renderString("")
-		self.renderString(f"-- BEGIN: create the {dbName} database")
+		self.output("")
+		self.output(f"-- BEGIN: create the {dbName} database")
 		dbName = dbName.replace("'", "''")
-		self.renderString(f"DROP DATABASE IF EXISTS '{dbName}';")
+		self.output(f"DROP DATABASE IF EXISTS '{dbName}';")
 
 		charsetSpec = ""
 		if KEY_DB_CHARSET in dbSpec:
@@ -262,42 +384,45 @@ class MySQL_Wrapper(DBWrapper):
 			commentSpec = commentSpec.replace("'", "''")
 			collateSpec = f"COMMENT '{commentSpec}'"
 
-		self.renderString(f"CREATE DATABASE '{dbName}' {charsetSpec} {collateSpec} {commentSpec};")
+		self.output(f"CREATE DATABASE '{dbName}' {charsetSpec} {collateSpec} {commentSpec};")
 
 		if KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
 					u = self.__quoteUser(str(u))
-					self.renderString("GRANT")
+					self.output("GRANT")
 					comma = ","
-					i = 0
-					m = len(p)
-					for pv in p:
-						i += 1
-						if (i >= m):
-							comma = ""
-						if pv == "*":
-							p = "ALL"
-						self.renderString(f"\t{p}{comma}")
-					self.renderString(f"ON '{dbName}'.* TO {u};")
-				self.renderString("FLUSH PRIVILEGES;")
-		self.renderString(f"-- END: creation of the database {dbName}")
+					# Take a shortcut
+					if "*" in p:
+						p = ["ALL"]
+						comma = ""
+					else:
+						i = 0
+						m = len(p)
+						for pv in p:
+							i += 1
+							if (i >= m):
+								comma = ""
+							self.output(f"\t{p}{comma}")
+					self.output(f"ON '{dbName}'.* TO {u};")
+				self.output("FLUSH PRIVILEGES;")
+		self.output(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
-		self.renderString("-- schemas aren't supported in MySQL/MariaDB")
+		self.output("-- schemas aren't supported in MySQL/MariaDB")
 
-	def renderQuerySQL(self, db, schema, user, query):
+	def renderQuerySQL(self, db, user, query):
 		dbLabel = db
 		if not db:
 			dbLabel = "<current-database>"
-		self.renderString(f"-- BEGIN: run query on {dbLabel}")
+		self.output(f"-- BEGIN: run query on {dbLabel}")
 
 		if db:
 			db = db.replace("'", "''")
-			self.renderString(f"USE '{db}';")
-		self.renderString(query + ";")
-		self.renderString(f"-- END: run query on {dbLabel}")
+			self.output(f"USE '{db}';")
+		self.output(query + ";")
+		self.output(f"-- END: run query on {dbLabel}")
 
 def getSecretPassword(spec, fallback = "12345"):
 	if spec is None:
@@ -531,7 +656,7 @@ with dbwrapperType() as dbwrapper:
 			if "user" in script:
 				user = str(script["user"])
 
-			dbwrapper.renderQuerySQL(db, schema, user, query)
+			dbwrapper.renderQuerySQL(db, user, query)
 
 # TA-DAAAA!! We're done... now let the original container's startup script do its thing ...
 exit(0)
