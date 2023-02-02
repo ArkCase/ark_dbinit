@@ -32,14 +32,11 @@ databases:
   triadia:
 
 scripts:
-  a: b
-  b:
-    file: "Dockerfile"
-  c:
-    query: kkck
+  - b
+  - file: "Dockerfile"
+  - query: kkck
     user: someUser
-  d:
-    url: http://localhost
+  - url: http://localhost
     encoding: UTF-8
 
 kaka:
