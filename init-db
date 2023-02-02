@@ -1,0 +1,230 @@
+#!/usr/bin/python
+
+from abc import ABC, abstractmethod
+import errno
+import json
+import logging
+import os
+import re
+import sys
+import traceback
+import urllib
+import yaml
+
+ENV_INIT_DB_CONF = "INIT_DB_CONF"
+
+class DBWrapper:
+
+	def __init__(self, aliases, adminUsername):
+		if adminUsername is None:
+			raise Exception("Must provide the name for the admin user")
+		self.adminUsername = str(adminUsername).lower()
+		if not re.match(r"^[a-zA-Z_][a-zA-Z_0-9]*$", adminUsername):
+			raise Exception(f"The admin username is not valid: [{adminUsername}]")
+
+		self.aliases = [a.lower() for a in aliases]
+		if not (self.aliases):
+			raise Exception("Must provide at least one alias for the database")
+
+	def getName(self):
+		return self.aliases[0]
+
+	def getAdminUsername(self):
+		return self.adminUsername
+
+	def isCompatible(self, candidates):
+		if len(candidates) < 1:
+			return True
+
+		for c in candidates:
+			if str(c).lower() in self.aliases:
+				return True
+		return False
+
+	@abstractmethod
+	def renderAdminPassword(self, passwordSpec):
+		pass
+
+	@abstractmethod
+	def renderUserSql(self, userName, passwordSpec):
+		pass
+
+	@abstractmethod
+	def renderDatabaseSql(self, dbName, dbOwner):
+		pass
+
+	@abstractmethod
+	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaOwner):
+		pass
+
+	@abstractmethod
+	def renderQuerySQL(self, query, db, user):
+		pass
+
+class PSQL_Wrapper(DBWrapper):
+
+	def __init__(self):
+		super().__init__([ "postgres", "psql", "postgresql" ], "postgres")
+
+	def renderAdminPassword(self, passwordSpec):
+		print(f"ADMIN PW FOR {self.getName()} IS {passwordSpec}")
+
+	def renderUserSql(self, userName, passwordSpec):
+		print(f"USER SQL FOR {self.getName()} FOR {userName}/{passwordSpec}")
+
+	def renderDatabaseSql(self, dbName, dbOwner):
+		print(f"DATABASE SQL FOR {self.getName()} FOR {dbName}, OWNED BY {dbOwner}")
+
+	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaOwner):
+		print(f"SCHEMA SQL FOR {self.getName()} FOR {dbName}.{schemaName}, OWNED BY {schemaOwner}")
+
+	def renderQuerySQL(self, query, db, user):
+		print(f"QUERY SQL ON {db}, AS {user}, FOR {query}")
+
+
+class MySQL_Wrapper(DBWrapper):
+
+	def __init__(self):
+		super().__init__([ "mysql", "mariadb" ], "mysql")
+
+	def renderAdminPassword(self, passwordSpec):
+		print(f"ADMIN PW FOR {self.getName()} IS {passwordSpec}")
+
+	def renderUserSql(self, userName, passwordSpec):
+		print(f"USER SQL FOR {self.getName()} FOR {userName}/{passwordSpec}")
+
+	def renderDatabaseSql(self, dbName, dbOwner):
+		print(f"DATABASE SQL FOR {self.getName()} FOR {dbName}, OWNED BY {dbOwner}")
+
+	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaOwner):
+		print(f"SCHEMA SQL FOR {self.getName()} FOR {dbName}.{schemaName}, OWNED BY {schemaOwner}")
+
+	def renderQuerySQL(self, query, db, user):
+		print(f"QUERY SQL ON {db}, AS {user}, FOR {query}")
+
+
+
+def getSecretPassword(spec):
+	return f"Sooper Seekrit Passwerd from {spec}"
+
+def renderString(string):
+	# Write out to the file
+	pass
+
+if len(sys.argv) != 2:
+	# If no parameter is given, use an environment variable
+	if ENV_INIT_DB_CONF in os.environ:
+		source_file = os.environ[ENV_INIT_DB_CONF]
+		# Check if this points to a file ...
+		source_file_is_file = (os.path.exists(source_file) and os.path.isfile(source_file))
+	else:
+		print(f"usage: {sys.argv[0]} [dependency-file]")
+		print("")
+		print(f"\tIf the file is not given, its path will be read from the environment variable {ENV_INIT_DB_CONF},")
+		print(f"\twhich may also contain the configuration data directly, for convenience in containerized")
+		print(f"\tenvironments and the like.")
+		sys.exit(1)
+else:
+	# If the parameter is given, use it
+	source_file = sys.argv[1]
+	if source_file == "-":
+		source_file = sys.stdin
+		source_file_is_file = False
+	else:
+		source_file_is_file = True
+
+show_data = True
+if source_file_is_file:
+	logging.info(f"Loading the configuration from the file [{source_file}]...")
+	with open(source_file, "r") as f:
+		data = yaml.safe_load(f)
+else:
+	if type(source_file) == str:
+		logging.info(f"Parsing the configuration from the string: [\n{source_file}\n]...")
+		show_data = False
+	else:
+		logging.info("Parsing the configuration from stdin...")
+	data = yaml.safe_load(source_file)
+if data is None:
+	raise Exception("Data is not in YAML format")
+
+
+################################################################################
+# BEGIN THE ACTUAL WORK                                                        #
+################################################################################
+
+# Step 1: identify the kind of DB we're deploying, and instantiate the wrapper
+
+dbwrapper = MySQL_Wrapper()
+
+
+adminUsername = dbwrapper.getAdminUsername()
+
+if "admin" in data:
+	dbwrapper.renderAdminPassword(data["admin"]);
+
+if "users" in data:
+	for userName, userData in data["users"].items():
+		dbwrapper.renderUserSql(userName, userData)
+
+if "databases" in data:
+	for db, dbData in data["databases"].items():
+		dbOwner = adminUsername
+		if "owner" in dbData:
+			dbOwner = str(dbData["owner"])
+
+		dbwrapper.renderDatabaseSql(db, dbOwner)
+
+		if "schemas" in dbData:
+			for schema, schemaData in dbData["schemas"].items():
+				schemaOwner = dbOwner
+				if schemaData and ("owner" in schemaData):
+					schemaOwner = str(schemaData["owner"])
+
+				dbwrapper.renderDatabaseSchemaSql(db, schema, schemaOwner)
+
+if "scripts" in data:
+	for script in data["scripts"]:
+		if "onlyFor" in script:
+			if not dbwrapper.isCompatible(script["onlyFor"]):
+				continue
+
+		query = None
+		if "query" in script:
+			source = script["query"]
+			sourceType = "inline"
+			query = script["query"]
+		else:
+			source = None
+			sourceType = None
+			stream = None
+			try:
+				if "file" in script:
+					source = script["file"]
+					sourceType = "file"
+					stream = open(script["file"], "r")
+				elif "url" in script:
+					source = script["url"]
+					sourceType = "url"
+					stream = urllib.request.urlopen(script["url"])
+				if stream is not None:
+					with stream as s:
+						query = s.read();
+			except Exception as e:
+				logging.error(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
+
+		if query is None:
+			logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
+			continue
+
+		runOn = dbwrapper.getDefaultDatabase()
+		if "runOn" in script:
+			runOn = str(script["runOn"])
+
+		runAs = adminUsername
+		if "runAs" in script:
+			runAs = str(script["runAs"])
+
+		dbwrapper.renderQuerySQL(query, runOn, runAs)
+
+# TA-DAAAA!! We're done... now let the original container's startup script do its thing ...
