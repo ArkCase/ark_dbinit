@@ -145,15 +145,15 @@ class DBWrapper(object):
 		pass
 
 	@abstractmethod
-	def renderUserSql(self, userName, userSpec):
+	def renderUserSQL(self, userName, userSpec):
 		pass
 
 	@abstractmethod
-	def renderDatabaseSql(self, dbName, dbSpec):
+	def renderDatabaseSQL(self, dbName, dbSpec):
 		pass
 
 	@abstractmethod
-	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
+	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
 		pass
 
 	@abstractmethod
@@ -183,7 +183,7 @@ class PSQL_Wrapper(DBWrapper):
 		self.output(f"ALTER USER postgres WITH PASSWORD '{password}';")
 		self.output(f"-- END: set the root password")
 
-	def renderUserSql(self, userName, userSpec):
+	def renderUserSQL(self, userName, userSpec):
 		if "password" in userSpec:
 			password = getSecretPassword(userSpec["password"])
 		else:
@@ -215,7 +215,7 @@ class PSQL_Wrapper(DBWrapper):
 		self.output(f"CREATE USER {userName} {' '.join(roles)};")
 		self.output(f"-- END: creation of {userName} user")
 
-	def renderDatabaseSql(self, dbName, dbSpec):
+	def renderDatabaseSQL(self, dbName, dbSpec):
 		forceFlag = ""
 		if ("force" in dbSpec) and (bool(dbSpec["force"])):
 			forceFlag = "FORCE"
@@ -278,7 +278,7 @@ class PSQL_Wrapper(DBWrapper):
 
 		self.output(f"-- END: creation of the database {dbName}")
 
-	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
+	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
 		self.output("")
 		self.output(f"-- BEGIN: create the {dbName}.{schemaName} schema")
 		dbName = dbName.replace("'", "''")
@@ -341,7 +341,7 @@ class MySQL_Wrapper(DBWrapper):
 		self.output("FLUSH PRIVILEGES;")
 		self.output(f"-- END: set the root password")
 
-	def renderUserSql(self, userName, userSpec):
+	def renderUserSQL(self, userName, userSpec):
 		hosts = []
 		if KEY_USER_HOSTS in userSpec:
 			hosts = userSpec[KEY_USER_HOSTS]
@@ -366,7 +366,7 @@ class MySQL_Wrapper(DBWrapper):
 		self.output("FLUSH PRIVILEGES;")
 		self.output(f"-- END: creation of {userName} user")
 
-	def renderDatabaseSql(self, dbName, dbSpec):
+	def renderDatabaseSQL(self, dbName, dbSpec):
 		self.output("")
 		self.output(f"-- BEGIN: create the {dbName} database")
 		dbName = dbName.replace("'", "''")
@@ -416,7 +416,7 @@ class MySQL_Wrapper(DBWrapper):
 				self.output("FLUSH PRIVILEGES;")
 		self.output(f"-- END: creation of the database {dbName}")
 
-	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
+	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
 		self.output("-- schemas aren't supported in MySQL/MariaDB")
 
 	def renderQuerySQL(self, db, user, query):
@@ -554,7 +554,7 @@ with dbwrapperType() as dbwrapper:
 			users = str(users)
 			users = { users.strip() : { "password" : users } }
 		for userName, userData in data["users"].items():
-			dbwrapper.renderUserSql(userName, userData)
+			dbwrapper.renderUserSQL(userName, userData)
 
 	if "databases" in data:
 		for db, dbData in data["databases"].items():
@@ -580,7 +580,7 @@ with dbwrapperType() as dbwrapper:
 			except KeyError:
 				# Ignore if this doesn't exist
 				pass
-			dbwrapper.renderDatabaseSql(db, dbSpec)
+			dbwrapper.renderDatabaseSQL(db, dbSpec)
 
 			if "schemas" in dbData:
 				for schema, schemaSpec in dbData["schemas"].items():
@@ -599,7 +599,7 @@ with dbwrapperType() as dbwrapper:
 						fail(f"The database schema data for {db}.{schema} is of an unsupported type: {type(schemaSpec)}")
 
 					schemaSpec[KEY_DB_PRIVILEGES] = sanitizePrivileges(schemaSpec, "schema", f"{db}.{schema}")
-					dbwrapper.renderDatabaseSchemaSql(db, schema, schemaSpec)
+					dbwrapper.renderDatabaseSchemaSQL(db, schema, schemaSpec)
 
 	if "scripts" in data:
 		scripts = data["scripts"]
