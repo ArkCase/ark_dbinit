@@ -116,7 +116,7 @@ class DBWrapper(object):
 	def renderString(self, string):
 		# Write out to the output file
 		print(f"OUT: {string}")
-		self.__output.write(string)
+		print(string, file=self.__output)
 
 	def getName(self):
 		return self.__aliases[0]
