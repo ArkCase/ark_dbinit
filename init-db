@@ -9,7 +9,7 @@ import os
 import re
 import sys
 import traceback
-import urllib
+import urllib.request
 import yaml
 
 ENV_INIT_DB_CONF = "INIT_DB_CONF"
@@ -100,7 +100,14 @@ class DBWrapper(object):
 		return self
 
 	def __exit__(self, exc_type, exc_value, traceback):
-		self.close()
+		try:
+			self.close()
+		finally:
+			if exc_type and exc_value:
+				try:
+					os.remove(self.__path)
+				except:
+					pass
 
 	def open(self):
 		if self.__output:
@@ -633,16 +640,18 @@ with dbwrapperType() as dbwrapper:
 					if "file" in script:
 						source = script["file"]
 						sourceType = "file"
-						stream = open(script["file"], "r")
+						with open(script["file"], "rt") as s:
+							query = s.read();
 					elif "url" in script:
 						source = script["url"]
 						sourceType = "url"
-						stream = urllib.request.urlopen(script["url"])
-					if stream is not None:
-						with stream as s:
-							query = s.read();
+						encoding = "utf-8"
+						if ("encoding" in script) and (script["encoding"]):
+							encoding = str(script["encoding"])
+						with urllib.request.urlopen(script["url"]) as u:
+							query = u.read().decode(encoding)
 				except Exception as e:
-					logging.error(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
+					fail(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
 
 			if query is None:
 				logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
