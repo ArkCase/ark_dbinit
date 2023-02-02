@@ -25,7 +25,7 @@ parser.add_argument("--secrets", metavar="secrets", action="store", help=f"The d
 
 args = parser.parse_args()
 
-logging.basicConfig(level=logging.DEBUG, format = '%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
 
 if args.config:
 	# If the parameter is given, use it
@@ -76,21 +76,50 @@ KEY_DB_COLLATE = "collate"
 KEY_DB_COMMENT = "comment"
 KEY_DB_PRIVILEGES = "privileges"
 
-class DBWrapper:
+def fail(msg):
+	logging.error(msg)
+	exit(1)
+
+class DBWrapper(object):
 
 	def __init__(self, aliases, adminUsername):
 		if adminUsername is None:
-			raise Exception("Must provide the name for the admin user")
+			fail("Must provide the name for the admin user")
 		self.adminUsername = str(adminUsername).lower()
 		if not re.match(r"^[a-zA-Z_][a-zA-Z_0-9]*$", adminUsername):
-			raise Exception(f"The admin username is not valid: [{adminUsername}]")
+			fail(f"The admin username is not valid: [{adminUsername}]")
 
-		self.aliases = [a.lower() for a in aliases]
-		if not (self.aliases):
-			raise Exception("Must provide at least one alias for the database")
+		self.__aliases = [a.lower() for a in aliases]
+		if not (self.__aliases):
+			fail("Must provide at least one alias for the database")
+
+		self.__output = None
+
+	def __enter__(self):
+		self.open()
+		return self
+
+	def __exit__(self, exc_type, exc_value, traceback):
+		self.close()
+
+	def open(self):
+		if self.__output:
+			raise Exception("The output stream is already open")
+
+		self.__path = f"{INIT_DB_STORE}/000-{self.__aliases[0]}-database-init-script.sql"
+		try:
+			self.__output = open(self.__path, "wt")
+			logging.info(f"Opened the output file at [{self.__path}]")
+		except Exception as e:
+			fail(f"Failed to create the target file at [{self.__path}]:\n{traceback.format_exc()}")
+
+	def renderString(self, string):
+		# Write out to the output file
+		print(f"OUT: {string}")
+		self.__output.write(string)
 
 	def getName(self):
-		return self.aliases[0]
+		return self.__aliases[0]
 
 	def getAdminUsername(self):
 		return self.adminUsername
@@ -100,7 +129,7 @@ class DBWrapper:
 			return True
 
 		for c in candidates:
-			if str(c).lower() in self.aliases:
+			if str(c).lower() in self.__aliases:
 				return True
 		return False
 
@@ -121,8 +150,17 @@ class DBWrapper:
 		pass
 
 	@abstractmethod
-	def renderQuerySQL(self, query, db, schema, user):
+	def renderQuerySQL(self, db, schema, user, query):
 		pass
+
+	def close(self):
+		if not self.__output:
+			return
+		try:
+			logging.info(f"Closing the output file at [{self.__path}]")
+			self.__output.close()
+		finally:
+			self.__output = None
 
 class PSQL_Wrapper(DBWrapper):
 
@@ -141,7 +179,7 @@ class PSQL_Wrapper(DBWrapper):
 	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
 		print(f"SCHEMA SQL FOR {self.getName()} FOR {dbName}.{schemaName}, OWNED BY {schemaSpec}")
 
-	def renderQuerySQL(self, query, db, schema, user):
+	def renderQuerySQL(self, db, schema, user, query):
 		print(f"QUERY SQL ON {db}, AS {user}, FOR {query}")
 
 
@@ -154,7 +192,7 @@ class MySQL_Wrapper(DBWrapper):
 	def __quoteUser(self, user):
 		m = self.userRegex.match(user)
 		if not m:
-			raise Exception(f"The user spec [{user}] is not valid")
+			fail(f"The user spec [{user}] is not valid")
 		u = m.group(1)
 		u = u.replace("'", "''")
 
@@ -167,18 +205,19 @@ class MySQL_Wrapper(DBWrapper):
 	def renderAdminPassword(self, adminSpec):
 		if "password" in adminSpec:
 			password = getSecretPassword(adminSpec["password"])
-			renderString("")
-			renderString(f"-- set the root password to [{password}]")
-			renderString(f"ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '{password}';")
-			renderString(f"ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '{password}';")
-			renderString("FLUSH PRIVILEGES;")
+			self.renderString("")
+			self.renderString(f"-- BEGIN: set the root password to [{password}]")
+			self.renderString(f"ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '{password}';")
+			self.renderString(f"ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '{password}';")
+			self.renderString("FLUSH PRIVILEGES;")
+			self.renderString(f"-- END: set the root password")
 
 	def renderUserSql(self, userName, userSpec):
 		hosts = []
 		if KEY_USER_HOSTS in userSpec:
 			hosts = userSpec[KEY_USER_HOSTS]
 			if type(hosts) != list:
-				raise Exception(f"The '{KEY_USER_HOSTS}' entries must be a list of strings")
+				fail(f"The '{KEY_USER_HOSTS}' entries must be a list of strings")
 			hosts = [str(h) for h in hosts]
 
 		if not hosts:
@@ -191,17 +230,18 @@ class MySQL_Wrapper(DBWrapper):
 
 		for host in hosts:
 			userName = self.__quoteUser(f"{userName}@{host}")
-			renderString("")
-			renderString(f"-- create the {userName} user")
-			renderString(f"DROP USER IF EXISTS {userName};")
-			renderString(f"CREATE USER {userName} IDENTIFIED BY '{password}';")
-		renderString("FLUSH PRIVILEGES;")
+			self.renderString("")
+			self.renderString(f"-- BEGIN: create the {userName} user")
+			self.renderString(f"DROP USER IF EXISTS {userName};")
+			self.renderString(f"CREATE USER {userName} IDENTIFIED BY '{password}';")
+		self.renderString("FLUSH PRIVILEGES;")
+		self.renderString(f"-- END: creation of {userName} user")
 
 	def renderDatabaseSql(self, dbName, dbSpec):
-		renderString("")
-		renderString(f"-- create the {dbName} database")
+		self.renderString("")
+		self.renderString(f"-- BEGIN: create the {dbName} database")
 		dbName = dbName.replace("'", "''")
-		renderString(f"DROP DATABASE IF EXISTS '{dbName}';")
+		self.renderString(f"DROP DATABASE IF EXISTS '{dbName}';")
 
 		charsetSpec = ""
 		if KEY_DB_CHARSET in dbSpec:
@@ -222,14 +262,14 @@ class MySQL_Wrapper(DBWrapper):
 			commentSpec = commentSpec.replace("'", "''")
 			collateSpec = f"COMMENT '{commentSpec}'"
 
-		renderString(f"CREATE DATABASE '{dbName}' {charsetSpec} {collateSpec} {commentSpec};")
+		self.renderString(f"CREATE DATABASE '{dbName}' {charsetSpec} {collateSpec} {commentSpec};")
 
 		if KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
 					u = self.__quoteUser(str(u))
-					renderString("GRANT")
+					self.renderString("GRANT")
 					comma = ","
 					i = 0
 					m = len(p)
@@ -239,23 +279,25 @@ class MySQL_Wrapper(DBWrapper):
 							comma = ""
 						if pv == "*":
 							p = "ALL"
-						renderString(f"\t{p}{comma}")
-					renderString(f"ON '{dbName}'.* TO {u};")
-				renderString("FLUSH PRIVILEGES;")
+						self.renderString(f"\t{p}{comma}")
+					self.renderString(f"ON '{dbName}'.* TO {u};")
+				self.renderString("FLUSH PRIVILEGES;")
+		self.renderString(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
-		renderString("-- schemas aren't supported in MySQL/MariaDB")
+		self.renderString("-- schemas aren't supported in MySQL/MariaDB")
 
-	def renderQuerySQL(self, query, db, schema, user):
+	def renderQuerySQL(self, db, schema, user, query):
 		dbLabel = db
 		if not db:
 			dbLabel = "<current-database>"
-		renderString(f"-- Run query on {dbLabel}")
+		self.renderString(f"-- BEGIN: run query on {dbLabel}")
 
 		if db:
 			db = db.replace("'", "''")
-			renderString(f"USE '{db}';")
-		renderString(query + ";")
+			self.renderString(f"USE '{db}';")
+		self.renderString(query + ";")
+		self.renderString(f"-- END: run query on {dbLabel}")
 
 def getSecretPassword(spec, fallback = "12345"):
 	if spec is None:
@@ -266,10 +308,10 @@ def getSecretPassword(spec, fallback = "12345"):
 
 	if type(spec) == dict:
 		if not (KEY_SECRET_KEY in spec):
-			raise Exception(f"No '{KEY_SECRET_KEY}' was given to pull the password from")
+			fail(f"No '{KEY_SECRET_KEY}' was given to pull the password from")
 		secret = f"{INIT_DB_SECRETS}/{spec[KEY_SECRET_KEY]}"
 		if (not os.path.exists(secret)) or (not os.path.isfile(secret)):
-			raise Exception(f"The secret '{secret}' is inaccessible")
+			fail(f"The secret '{secret}' is inaccessible")
 		with open(secret, "r") as f:
 			return f.read()
 
@@ -288,7 +330,7 @@ def sanitizePrivileges(data, objType, objName):
 		return privileges
 
 	if type(data) != dict:
-		raise Exception(f"The database data for {objType} {objName} is of an unsupported type: {type(data)}")
+		fail(f"The database data for {objType} {objName} is of an unsupported type: {type(data)}")
 
 	if not KEY_DB_PRIVILEGES in data:
 		return {}
@@ -318,14 +360,10 @@ def sanitizePrivileges(data, objType, objName):
 			elif type(p) == list:
 				newPrivileges[u] = [str(v) for v in p]
 			else:
-				raise Exception(f"The privileges value for {objType} {objName}, user {u} is of an unsupported type: {type(p)}")
+				fail(f"The privileges value for {objType} {objName}, user {u} is of an unsupported type: {type(p)}")
 		return newPrivileges
 
-	raise Exception(f"The privileges object for {objType} {objName} is of an unsupported type: {type(privileges)}")
-
-def renderString(string):
-	# Write out to the output file
-	print(f"STR: {string}")
+	fail(f"The privileges object for {objType} {objName} is of an unsupported type: {type(privileges)}")
 
 dbType = INIT_DB_TYPE.lower()
 MAPPERS = {
@@ -337,10 +375,7 @@ MAPPERS = {
 }
 
 if dbType not in MAPPERS:
-	logging.error(f"Database of type [{INIT_DB_TYPE}] is not supported")
-
-logging.info(f"Rendering the script for {INIT_DB_TYPE}...")
-dbwrapper = MAPPERS[dbType]()
+	fail(f"Database of type [{INIT_DB_TYPE}] is not supported")
 
 show_data = True
 if source_file_is_file:
@@ -355,131 +390,148 @@ else:
 		logging.info("Parsing the configuration from stdin...")
 	data = yaml.safe_load(source_file)
 if data is None:
-	raise Exception("Data is not in YAML format")
+	fail("Data is not in YAML format")
 
 
 ################################################################################
 # BEGIN THE ACTUAL WORK                                                        #
 ################################################################################
 
-# Step 1: identify the kind of DB we're deploying, and instantiate the wrapper
+logging.info(f"Rendering the script for {INIT_DB_TYPE}...")
+dbwrapperType = MAPPERS[dbType]
+with dbwrapperType() as dbwrapper:
+	adminUsername = dbwrapper.getAdminUsername()
 
-adminUsername = dbwrapper.getAdminUsername()
+	if "admin" in data:
+		admin = data["admin"]
+		if type(admin) == str:
+			admin = { "password" : admin }
+		elif type(admin) != dict:
+			fail("The 'admin' section must either be a string or a map")
+		dbwrapper.renderAdminPassword(admin)
 
-if "admin" in data:
-	admin = data["admin"]
-	if type(admin) == str:
-		admin = { "password" : admin }
-	elif type(admin) != dict:
-		raise Exception("The 'admin' section must either be a string or a map")
-	dbwrapper.renderAdminPassword(admin)
+	if "users" in data:
+		users = data["users"]
+		if type(users) == list:
+			newUsers = {}
+			for u in users:
+				u = str(u)
+				newUsers[u] = { "password" : u }
+			users = newUsers
+		elif type(users) != dict:
+			users = str(users)
+			users = { users.strip() : { "password" : users } }
+		for userName, userData in data["users"].items():
+			dbwrapper.renderUserSql(userName, userData)
 
-if "users" in data:
-	users = data["users"]
-	if type(users) == list:
-		newUsers = {}
-		for u in users:
-			u = str(u)
-			newUsers[u] = { "password" : u }
-		users = newUsers
-	elif type(users) != dict:
-		users = str(users)
-		users = { users.strip() : { "password" : users } }
-	for userName, userData in data["users"].items():
-		dbwrapper.renderUserSql(userName, userData)
+	if "databases" in data:
+		for db, dbData in data["databases"].items():
+			if type(dbData) == str:
+				# If it's a string, that's the user that owns it
+				dbData = { KEY_DB_PRIVILEGES : { dbData : [ "*" ] } }
+			elif type(dbData) == list:
+				privileges = {}
+				for d in dbData:
+					privileges[str(d)] = [ "*" ]
+				dbData = { KEY_DB_PRIVILEGES : privileges }
+			elif type(dbData) == dict:
+				pass
+			elif not dbData:
+				dbData = {}
+			else:
+				fail(f"The database data for {db} is of an unsupported type: {type(dbData)}")
 
-if "databases" in data:
-	for db, dbData in data["databases"].items():
-		if type(dbData) == str:
-			# If it's a string, that's the user that owns it
-			dbData = { KEY_DB_PRIVILEGES : { dbData : [ "*" ] } }
-		elif type(dbData) == list:
-			privileges = {}
-			for d in dbData:
-				privileges[str(d)] = [ "*" ]
-			dbData = { KEY_DB_PRIVILEGES : privileges }
-		elif type(dbData) == dict:
-			pass
-		elif dbData:
-			raise Exception(f"The database data for {db} is of an unsupported type: {type(dbData)}")
+			dbData[KEY_DB_PRIVILEGES] = sanitizePrivileges(dbData, "database", db)
+			dbSpec = dbData.copy()
+			try:
+				dbSpec.pop("schemas")
+			except KeyError:
+				# Ignore if this doesn't exist
+				pass
+			dbwrapper.renderDatabaseSql(db, dbSpec)
 
-		dbData[KEY_DB_PRIVILEGES] = sanitizePrivileges(dbData, "database", db)
-		dbSpec = dbData.copy()
-		try:
-			dbSpec.pop("schemas")
-		except KeyError:
-			# Ignore if this doesn't exist
-			pass
-		dbwrapper.renderDatabaseSql(db, dbSpec)
+			if "schemas" in dbData:
+				for schema, schemaSpec in dbData["schemas"].items():
+					if type(schemaSpec) == str:
+						schemaSpec = { KEY_DB_PRIVILEGES : { schemaSpec : [ "*" ] } }
+					elif type(schemaSpec) == list:
+						privileges = {}
+						for s in schemaSpec:
+							privileges[str(s)] = [ "*" ]
+						schemaSpec = { KEY_DB_PRIVILEGES : privileges }
+					elif type(schemaSpec) == dict:
+						pass
+					elif not schemaSpec:
+						schemaSpec = {}
+					else:
+						fail(f"The database schema data for {db}.{schema} is of an unsupported type: {type(schemaSpec)}")
 
-		if "schemas" in dbData:
-			for schema, schemaSpec in dbData["schemas"].items():
-				if type(schemaSpec) == str:
-					schemaSpec = { KEY_DB_PRIVILEGES : { schemaSpec : [ "*" ] } }
-				elif type(schemaSpec) == list:
-					privileges = {}
-					for s in schemaSpec:
-						privileges[str(s)] = [ "*" ]
-					schemaSpec = { KEY_DB_PRIVILEGES : privileges }
-				elif type(schemaSpec) == dict:
-					pass
-				elif not schemaSpec:
-					schemaSpec = {}
-				else:
-					raise Exception(f"The database schema data for {db}.{schema} is of an unsupported type: {type(schemaSpec)}")
+					schemaSpec[KEY_DB_PRIVILEGES] = sanitizePrivileges(schemaSpec, "schema", f"{db}.{schema}")
+					dbwrapper.renderDatabaseSchemaSql(db, schema, schemaSpec)
 
-				schemaSpec[KEY_DB_PRIVILEGES] = sanitizePrivileges(schemaSpec, "schema", f"{db}.{schema}")
-				dbwrapper.renderDatabaseSchemaSql(db, schema, schemaSpec)
+	if "scripts" in data:
+		scripts = data["scripts"]
+		if not scripts:
+			scripts = []
+		elif type(scripts) == dict:
+			scripts = scripts.values()
+		elif type(scripts) != list:
+			fail(f"The 'scripts' data structure must be a list or a map")
 
-if "scripts" in data:
-	for script in data["scripts"]:
-		if "onlyFor" in script:
-			onlyFor = script["onlyFor"]
-			if type(onlyFor) == str:
-				onlyFor = [ onlyFor ]
-			elif type(onlyFor) == list:
-				onlyFor = [str(v) for v in onlyFor]
-			elif onlyFor:
-				raise Exception(f"The 'onlyFor' declaration for script # {p} is invalid ({type(onlyFor)})")
-			if onlyFor and (not dbwrapper.isCompatible(onlyFor)):
+		for script in scripts:
+			if not script:
+				continue
+			elif type(script) == str:
+				script = { "query" : script }
+
+			if "onlyFor" in script:
+				onlyFor = script["onlyFor"]
+				if type(onlyFor) == str:
+					onlyFor = [ onlyFor ]
+				elif type(onlyFor) == list:
+					onlyFor = [str(v) for v in onlyFor]
+				elif onlyFor:
+					fail(f"The 'onlyFor' declaration for script # {p} is invalid ({type(onlyFor)})")
+				if onlyFor and (not dbwrapper.isCompatible(onlyFor)):
+					continue
+
+			query = None
+			if "query" in script:
+				source = script["query"]
+				sourceType = "inline"
+				query = script["query"]
+			else:
+				source = None
+				sourceType = None
+				stream = None
+				try:
+					if "file" in script:
+						source = script["file"]
+						sourceType = "file"
+						stream = open(script["file"], "r")
+					elif "url" in script:
+						source = script["url"]
+						sourceType = "url"
+						stream = urllib.request.urlopen(script["url"])
+					if stream is not None:
+						with stream as s:
+							query = s.read();
+				except Exception as e:
+					logging.error(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
+
+			if query is None:
+				logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
 				continue
 
-		query = None
-		if "query" in script:
-			source = script["query"]
-			sourceType = "inline"
-			query = script["query"]
-		else:
-			source = None
-			sourceType = None
-			stream = None
-			try:
-				if "file" in script:
-					source = script["file"]
-					sourceType = "file"
-					stream = open(script["file"], "r")
-				elif "url" in script:
-					source = script["url"]
-					sourceType = "url"
-					stream = urllib.request.urlopen(script["url"])
-				if stream is not None:
-					with stream as s:
-						query = s.read();
-			except Exception as e:
-				logging.error(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
+			db = None
+			if "db" in script:
+				db = str(script["db"])
 
-		if query is None:
-			logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
-			continue
+			user = None
+			if "user" in script:
+				user = str(script["user"])
 
-		db = None
-		if "db" not in script:
-			db = str(script["runOn"])
-
-		user = None
-		if "user" in script:
-			user = str(script["user"])
-
-		dbwrapper.renderQuerySQL(query, db, schema, user)
+			dbwrapper.renderQuerySQL(db, schema, user, query)
 
 # TA-DAAAA!! We're done... now let the original container's startup script do its thing ...
+exit(0)
