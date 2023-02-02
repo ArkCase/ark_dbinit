@@ -240,7 +240,7 @@ class MySQL_Wrapper(DBWrapper):
 						if pv == "*":
 							p = "ALL"
 						renderString(f"\t{p}{comma}")
-					renderString(f"ON '{dbName}'.* TO '{u}';")
+					renderString(f"ON '{dbName}'.* TO {u};")
 				renderString("FLUSH PRIVILEGES;")
 
 	def renderDatabaseSchemaSql(self, dbName, schemaName, schemaSpec):
