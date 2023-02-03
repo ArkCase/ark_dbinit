@@ -271,7 +271,7 @@ class PSQL_Wrapper(DBWrapper):
 						i += 1
 						if (i >= m):
 							comma = ""
-						self.output(f"\t{p}{comma}")
+						self.output(f"\t{pv}{comma}")
 					self.output(f"ON DATABASE '{dbName}' TO {u};")
 
 		# We do this last in case specific privileges were granted above
@@ -411,7 +411,7 @@ class MySQL_Wrapper(DBWrapper):
 						i += 1
 						if (i >= m):
 							comma = ""
-						self.output(f"\t{p}{comma}")
+						self.output(f"\t{pv}{comma}")
 					self.output(f"ON '{dbName}'.* TO {u};")
 				self.output("FLUSH PRIVILEGES;")
 		self.output(f"-- END: creation of the database {dbName}")
