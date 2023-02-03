@@ -175,8 +175,8 @@ class PSQL_Wrapper(DBWrapper):
 		super().__init__([ "postgres", "psql", "postgresql" ], "postgres")
 
 	def __quoteUser(self, user):
-		user = user.replace("'", "''")
-		return f"'{user}'"
+		user = user.replace('"', '""')
+		return f"\"{user}\""
 
 	def renderAdminPassword(self, adminSpec):
 		if "password" not in adminSpec:
@@ -213,10 +213,11 @@ class PSQL_Wrapper(DBWrapper):
 		# Pre-pend the password role with the value we want
 		roles = [f"PASSWORD '{password}'"] + roles
 
+		userName = userName.replace('"', '""')
 		self.output("")
 		self.output(f"-- BEGIN: create the {userName} user")
-		self.output(f"DROP USER IF EXISTS {userName};")
-		self.output(f"CREATE USER {userName} {' '.join(roles)};")
+		self.output(f"DROP USER IF EXISTS \"{userName}\";")
+		self.output(f"CREATE USER \"{userName}\" {' '.join(roles)};")
 		self.output(f"-- END: creation of {userName} user")
 
 	def renderDatabaseSQL(self, dbName, dbSpec):
@@ -226,8 +227,8 @@ class PSQL_Wrapper(DBWrapper):
 
 		self.output("")
 		self.output(f"-- BEGIN: create the {dbName} database")
-		dbName = dbName.replace("'", "''")
-		self.output(f"DROP DATABASE IF EXISTS '{dbName}' {forceFlag};")
+		dbName = dbName.replace('"', '""')
+		self.output(f"DROP DATABASE IF EXISTS \"{dbName}\" {forceFlag};")
 
 		owner = None
 		ownerSpec = ""
@@ -235,7 +236,7 @@ class PSQL_Wrapper(DBWrapper):
 			owner = dbSpec["owner"]
 			if type(owner) != str:
 				fail(f"The owner clause for database {dbName} must be a string with the owner's name ({type(owner)})")
-			ownerSpec = f"OWNER '{owner}'"
+			ownerSpec = f"OWNER \"{owner}\""
 
 		flagSpec = []
 		if ("flags" in dbSpec) and (dbSpec["flags"]):
@@ -253,7 +254,7 @@ class PSQL_Wrapper(DBWrapper):
 
 		flagSpec = list(filter(lambda r: r.upper().find("OWNER") < 0, flagSpec))
 
-		self.output(f"CREATE DATABASE '{dbName}' {ownerSpec} {' '.join(flagSpec)};")
+		self.output(f"CREATE DATABASE \"{dbName}\" {ownerSpec} {' '.join(flagSpec)};")
 
 		if KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
@@ -272,21 +273,21 @@ class PSQL_Wrapper(DBWrapper):
 						if (i >= m):
 							comma = ""
 						self.output(f"\t{pv}{comma}")
-					self.output(f"ON DATABASE '{dbName}' TO {u};")
+					self.output(f"ON DATABASE \"{dbName}\" TO {u};")
 
 		# We do this last in case specific privileges were granted above
 		if owner:
-			self.output(f"GRANT ALL ON DATABASE '{dbName}' TO {owner} WITH GRANT OPTION;")
+			self.output(f"GRANT ALL ON DATABASE \"{dbName}\" TO {owner} WITH GRANT OPTION;")
 
 		self.output(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
 		self.output("")
 		self.output(f"-- BEGIN: create the {dbName}.{schemaName} schema")
-		dbName = dbName.replace("'", "''")
-		schemaName = schemaName.replace("'", "''")
-		self.output(f"\c '{dbName}'")
-		self.output(f"CREATE SCHEMA IF NOT EXISTS '{schemaName}';")
+		dbName = dbName.replace('"', '""')
+		schemaName = schemaName.replace('"', '""')
+		self.output(f"\c \"{dbName}\"")
+		self.output(f"CREATE SCHEMA IF NOT EXISTS \"{schemaName}\";")
 		self.output(f"-- END: creation of the {dbName}.{schemaName} schema")
 
 	def renderQuerySQL(self, db, user, query):
@@ -299,12 +300,12 @@ class PSQL_Wrapper(DBWrapper):
 		self.output(f"-- BEGIN: run query on {dbLabel} as {userLabel}")
 
 		if user:
-			user = user.replace("'", "''")
-			self.output(f"SET SESSION AUTHORIZATION '{user}';")
+			user = user.replace('"', '""')
+			self.output(f"SET SESSION AUTHORIZATION \"{user}\";")
 
 		if db:
-			db = db.replace("'", "''")
-			self.output(f"\c '{db}'")
+			db = db.replace('"', '""')
+			self.output(f"\c \"{db}\"")
 
 		self.output(query + ";")
 
