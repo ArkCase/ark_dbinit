@@ -2,30 +2,42 @@
 
 from abc import ABC, abstractmethod
 import argparse
+import base64
 import errno
 import json
 import logging
 import os
 import re
+import shutil
 import sys
 import traceback
 import urllib.request
 import yaml
 
+TARGET_SCRIPT_NAME = "dbinit.runner"
+
 ENV_INIT_DB_CONF = "INIT_DB_CONF"
 ENV_INIT_DB_TYPE = "INIT_DB_TYPE"
 ENV_INIT_DB_STORE = "INIT_DB_STORE"
 ENV_INIT_DB_SECRETS = "INIT_DB_SECRETS"
+ENV_INIT_DB_SHELL_SOURCES = "INIT_DB_SHELL_SOURCES"
+ENV_INIT_DB_SHELL = "INIT_DB_SHELL"
 
 parser = argparse.ArgumentParser(description="Database Initialization Script Generator")
-parser.add_argument("config", metavar="config", action="store", help=f"The configuration to use (if not given, read it from the {ENV_INIT_DB_CONF} environment variable)", type=str, nargs="?")
-parser.add_argument("--db", metavar="db", action="store", help=f"The type of database to render the scripts for (if not given, read it from the {ENV_INIT_DB_TYPE} environment variable)", type=str, nargs=1)
-parser.add_argument("--store", metavar="store", action="store", help=f"The directory into which the script will be rendered (if not given, read it from the {ENV_INIT_DB_STORE} environment variable)", type=str, nargs=1)
-parser.add_argument("--secrets", metavar="secrets", action="store", help=f"The directory under which all required secrets may be found (if not given, read it from the {ENV_INIT_DB_SECRETS} environment variable)", type=str, nargs=1)
+parser.add_argument("config", metavar="config", action="store", help=f"The configuration to use (if not given, it will be read from the{ENV_INIT_DB_CONF} environment variable)", type=str, nargs="?")
+parser.add_argument("--db", metavar="db", action="store", help=f"The type of database to render the scripts for (if not given, it will be read from the{ENV_INIT_DB_TYPE} environment variable)", type=str, nargs=1)
+parser.add_argument("--store", metavar="store", action="store", help=f"The directory into which the script will be rendered (if not given, it will be read from the{ENV_INIT_DB_STORE} environment variable)", type=str, nargs=1)
+parser.add_argument("--secrets", metavar="secrets", action="store", help=f"The directory under which all required secrets may be found (if not given, it will be read from the{ENV_INIT_DB_SECRETS} environment variable)", type=str, nargs=1)
+parser.add_argument("--shell", action="store_true", help=f"When set, causes a small shellscript to be output which will run the generated script (if not given, it will be read from the {ENV_INIT_DB_SHELL} environment variable)", default=False)
+parser.add_argument("--shell-sources", metavar="shell_sources", action="store", help=f"The directory under which all script templates are kept (ignored when --shell is not given, if not given, it will be read from the {ENV_INIT_DB_SHELL_SOURCES} environment variable)", type=str, nargs=1)
 
 args = parser.parse_args()
 
 logging.basicConfig(level=logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
+
+def fail(msg):
+	logging.error(msg)
+	exit(1)
 
 if args.config:
 	# If the parameter is given, use it
@@ -69,16 +81,27 @@ if not INIT_DB_TYPE:
 	parser.print_help()
 	exit(1)
 
+INIT_DB_SHELL = False
+if args.shell:
+	INIT_DB_SHELL = args.shell
+elif ENV_INIT_DB_SHELL in os.environ:
+	INIT_DB_SHELL = bool(os.environ[ENV_INIT_DB_SHELL])
+if INIT_DB_SHELL:
+	logging.info(f"Will output a shellscript to run the SQL script")
+
+	INIT_DB_SHELL_SOURCES = "/dbscripts"
+	if args.shell_sources:
+		INIT_DB_SHELL_SOURCES = args.shell_sources[0]
+	elif ENV_INIT_DB_SHELL_SOURCES in os.environ:
+		INIT_DB_SHELL_SOURCES = os.environ[ENV_INIT_DB_SHELL_SOURCES]
+	logging.info(f"Using shell script sources location at [{INIT_DB_SHELL_SOURCES}]")
+
 KEY_SECRET_KEY = "secretKey"
 KEY_USER_HOSTS = "hosts"
 KEY_DB_CHARSET = "charset"
 KEY_DB_COLLATE = "collate"
 KEY_DB_COMMENT = "comment"
 KEY_DB_PRIVILEGES = "privileges"
-
-def fail(msg):
-	logging.error(msg)
-	exit(1)
 
 class DBWrapper(object):
 
@@ -119,6 +142,9 @@ class DBWrapper(object):
 			logging.info(f"Opened the output file at [{self.__path}]")
 		except Exception as e:
 			fail(f"Failed to create the target file at [{self.__path}]:\n{traceback.format_exc()}")
+
+	def getPath(self):
+		return self.__path
 
 	def output(self, string):
 		# Write out to the output file
@@ -445,7 +471,7 @@ def getSecretPassword(spec, fallback = "12345"):
 		secret = f"{INIT_DB_SECRETS}/{spec[KEY_SECRET_KEY]}"
 		if (not os.path.exists(secret)) or (not os.path.isfile(secret)):
 			fail(f"The secret '{secret}' is inaccessible")
-		with open(secret, "r") as f:
+		with open(secret, "rt") as f:
 			return f.read()
 
 def sanitizePrivileges(data, objType, objName):
@@ -522,6 +548,7 @@ else:
 	else:
 		logging.info("Parsing the configuration from stdin...")
 	data = yaml.safe_load(source_file)
+
 if data is None:
 	fail("Data is not in YAML format")
 
@@ -532,8 +559,19 @@ if data is None:
 
 logging.info(f"Rendering the script for {INIT_DB_TYPE}...")
 dbwrapperType = MAPPERS[dbType]
+scriptPath = None
+adminPassword = ""
 with dbwrapperType() as dbwrapper:
 	adminUsername = dbwrapper.getAdminUsername()
+	dbType = dbwrapper.getName()
+	logging.info(f"The database type is actually {dbType}...")
+
+	if INIT_DB_SHELL:
+		scriptPath = dbwrapper.getPath()
+
+		scriptSource = f"{INIT_DB_SHELL_SOURCES}/{dbType}.sh"
+		if (not os.path.exists(scriptSource)) or (not os.path.isfile(scriptSource)):
+			fail(f"A shellscript was requested, but there is no template for {dbType} ({scriptSource}), can't continue")
 
 	if "admin" in data:
 		admin = data["admin"]
@@ -542,6 +580,8 @@ with dbwrapperType() as dbwrapper:
 		elif type(admin) != dict:
 			fail("The 'admin' section must either be a string or a map")
 		dbwrapper.renderAdminPassword(admin)
+		if "password" in admin:
+			adminPassword = getSecretPassword(admin["password"])
 
 	if "users" in data:
 		users = data["users"]
@@ -667,6 +707,34 @@ with dbwrapperType() as dbwrapper:
 				user = str(script["user"])
 
 			dbwrapper.renderQuerySQL(db, user, query)
+
+if INIT_DB_SHELL and scriptPath:
+	# Render/copy the script
+	# For safety, the admin password is given base64-encoded
+	if adminPassword:
+		adminPassword = adminPassword.encode("utf-8")
+		adminPassword = base64.b64encode(adminPassword)
+		adminPassword = adminPassword.decode("ascii")
+
+	# Copy the DB-specific script as dbinit.runner
+	scriptTarget = f"{INIT_DB_STORE}/{TARGET_SCRIPT_NAME}"
+	logging.info(f"Copying the template script from [{scriptSource}] into [{scriptTarget}]")
+	shutil.copyfile(scriptSource, scriptTarget)
+	# Make the script executable, just in case
+	os.chmod(scriptTarget, 0o755)
+
+	# Render this out to the /dbinit directory
+	content = f"""\
+	#!/bin/bash
+	source "./{TARGET_SCRIPT_NAME}" "{os.path.basename(scriptPath)}" {adminUsername} {adminPassword}
+	"""
+
+	logging.info("Rendering the initializer script...")
+	renderedScript = f"{INIT_DB_STORE}/dbinit.sh"
+	with open(renderedScript, "wt") as script:
+		script.write(content)
+	# Make the script executable, just in case
+	os.chmod(renderedScript, 0o755)
 
 # TA-DAAAA!! We're done... now let the original container's startup script do its thing ...
 exit(0)
