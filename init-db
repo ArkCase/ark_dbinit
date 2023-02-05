@@ -733,7 +733,7 @@ source "./{TARGET_SCRIPT_NAME}" "{os.path.basename(scriptPath)}" {adminUsername}
 """
 
 	logging.info("Rendering the initializer script...")
-	renderedScript = f"{INIT_DB_STORE}/dbinit.sh"
+	renderedScript = f"{INIT_DB_STORE}/000-dbinit.sh"
 	with open(renderedScript, "wt") as script:
 		script.write(content)
 	# Make the script executable, just in case
