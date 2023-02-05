@@ -726,6 +726,9 @@ if INIT_DB_SHELL and scriptPath:
 	# Render this out to the /dbinit directory
 	content = f"""\
 #!/bin/bash
+SCRIPT="$(readlink -f "${{BASH_SOURCE:-${0}}}")"
+BASEDIR="$(dirname "${{SCRIPT}}")"
+cd "${{BASEDIR}}"
 source "./{TARGET_SCRIPT_NAME}" "{os.path.basename(scriptPath)}" {adminUsername} {adminPassword}\
 """
 
