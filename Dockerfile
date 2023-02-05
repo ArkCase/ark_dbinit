@@ -39,7 +39,7 @@ RUN yum -y install epel-release && \
     yum -y clean all
 
 COPY init-db /
-COPY dbscripts /
+COPY dbscripts/* /dbscripts/
 
 #
 # Final parameters
