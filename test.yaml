@@ -1,0 +1,13 @@
+admin: "YieghuV!ahh0EoC1"
+users:
+  arkcase: &arkcaseDbPassword "ho!aKaeyoh-zo1do"
+  content: &contentDbPassword "eth3be.ox4phah!W"
+  # pentaho: &pentahoDbPassword "faiv>a[gheeP3Cai"
+  # jcr: &jcrDbPassword "ong>oo0Ocha~up^e"
+  # quartz: &quartzDbPassword "lie't+ahra6aiShu"
+databases:
+  arkcase: &arkcaseDb "arkcase"
+  content: &contentDb "content"
+  # pentaho: &pentahoDb "pentaho"
+  # jcr: &jcrDb "jcr"
+  # quartz: &quartzDb "quartz"
