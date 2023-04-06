@@ -11,6 +11,10 @@ admin:
 users:
   onebert:
     password: pass4-1bert
+
+  "single'quote'bert":
+    password: "password'with'both\"quotes"
+
   # ...
   twobert:
     password:

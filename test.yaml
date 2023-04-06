@@ -5,9 +5,11 @@ users:
   # pentaho: &pentahoDbPassword "faiv>a[gheeP3Cai"
   # jcr: &jcrDbPassword "ong>oo0Ocha~up^e"
   # quartz: &quartzDbPassword "lie't+ahra6aiShu"
+  "user'with`backticks\"quotes": "password'with`backticks\"quotes"
 databases:
   arkcase: &arkcaseDb "arkcase"
   content: &contentDb "content"
   # pentaho: &pentahoDb "pentaho"
   # jcr: &jcrDb "jcr"
   # quartz: &quartzDb "quartz"
+  "db`with'and\"quotes": "user'with`backticks\"quotes"
