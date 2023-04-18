@@ -1,13 +1,16 @@
-FROM rockylinux:8
-
 #
 # Basic Parameters
 #
+ARG PUBLIC_REGISTRY="public.ecr.aws"
+ARG BASE_REPO="arkcase/base"
+ARG BASE_TAG="8.7.0"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.0.0"
 ARG PKG="dbinit"
 ARG UID="0"
+
+FROM "${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
 
 #
 # Some important labels
