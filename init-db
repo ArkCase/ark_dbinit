@@ -379,6 +379,18 @@ class MySQL_Wrapper(DBWrapper):
 	def renderAdminPassword(self, adminSpec):
 		if "password" not in adminSpec:
 			return
+
+		# Some containers set the root password via different
+		# means which may cause problems with this initializer.
+		# Because of those cases, we require an extra flag for the
+		# times you're 100% POSITIVE this is needed
+		if "force" not in adminSpec:
+			return
+		else:
+			f = adminSpec["force"]
+			if not f or ("true" != str(f).lower()):
+				return
+
 		password = getSecretPassword(adminSpec["password"])
 		safePassword = self.safeSingleQuote(password)
 		self.output("")
