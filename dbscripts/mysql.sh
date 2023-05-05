@@ -10,4 +10,4 @@ ADMIN="${2}"
 # For mariadb/mysql, adding the admin password breaks things
 # [ -z "${PASS}" ] || export MYSQL_PWD="$(base64 -d <<< "${PASS}")"
 echo "Running the script [${SCRIPT}] as [${ADMIN}] ..."
-mysql --user="${ADMIN}" --host="localhost" --port=3306 < "${SCRIPT}"
+mysql ${mysql_flags} < "${SCRIPT}"
