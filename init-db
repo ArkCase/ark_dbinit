@@ -352,7 +352,7 @@ class PSQL_Wrapper(DBWrapper):
 class MySQL_Wrapper(DBWrapper):
 
 	def __init__(self):
-		super().__init__([ "mysql", "mariadb" ], "mysql")
+		super().__init__([ "mysql", "mariadb" ], "root")
 		self.userRegex = re.compile("^([^@]+)(?:@([^@]+))?$")
 
 	def __quoteUser(self, user):
