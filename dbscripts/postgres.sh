@@ -3,7 +3,7 @@
 # usage: ${0} script-to-run admin-username [admin-password]
 #
 
-if ! ${PG_INITIALIZED} ; then
+if ! ${PG_INITIALIZED:-false} ; then
 	echo "The database is already initialized, will not re-initialize"
 	exit 0
 fi

@@ -7,7 +7,7 @@ ARG BASE_TAG="8.7.0"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.0.2"
-ARG BLD="01"
+ARG BLD="02"
 ARG PKG="dbinit"
 ARG UID="0"
 
