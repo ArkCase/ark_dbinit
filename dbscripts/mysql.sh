@@ -3,7 +3,12 @@
 # usage: ${0} script-to-run admin-username [admin-password]
 #
 
-if ! ${MYSQL_DATADIR_FIRST_INIT:-false} ; then
+case "${MYSQL_DATADIR_FIRST_INIT,,}" in
+	true | t | yes | y | 1 | en | enable | enabled ) INITIALIZED="true" ;;
+	* ) INITIALIZED="false" ;;
+esac
+
+if ! "${INITIALIZED}" ; then
 	echo "The database is already initialized, will not re-initialize"
 	exit 0
 fi
