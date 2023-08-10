@@ -3,6 +3,11 @@
 # usage: ${0} script-to-run admin-username [admin-password]
 #
 
+if ! ${MYSQL_DATADIR_FIRST_INIT} ; then
+	echo "The database is already initialized, will not re-initialize"
+	exit 0
+fi
+
 SCRIPT="${1}"
 ADMIN="${2}"
 [ ${#} -lt 3 ] || PASS="${3}"
