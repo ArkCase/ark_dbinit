@@ -29,7 +29,6 @@ ENV INIT_DB_SECRETS "/dbsecrets"
 # Full update
 #
 RUN yum -y install epel-release && \
-    yum -y update && \
     yum -y install yum-utils which && \
     yum-config-manager \
         --enable devel \
