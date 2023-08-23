@@ -1,0 +1,6 @@
+#!/bin/bash
+
+[ -v SSL_DIR ] || SSL_DIR="/.ssl"
+acme-init
+
+exec /usr/local/bin/init-db "${@}"
