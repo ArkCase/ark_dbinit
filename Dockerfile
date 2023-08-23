@@ -3,11 +3,11 @@
 #
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG BASE_REPO="arkcase/base"
-ARG BASE_TAG="8.7.0"
+ARG BASE_TAG="8.8-01"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.0.2"
-ARG BLD="02"
+ARG VER="1.1.0"
+ARG BLD="01"
 ARG PKG="dbinit"
 ARG UID="0"
 
@@ -41,7 +41,8 @@ RUN yum -y install epel-release && \
     update-alternatives --set python /usr/bin/python3.9 && \
     yum -y clean all
 
-COPY init-db /
+COPY entrypoint /
+COPY init-db /usr/local/bin/
 COPY dbscripts/* /dbscripts/
 
 #
@@ -49,4 +50,4 @@ COPY dbscripts/* /dbscripts/
 #
 WORKDIR     /
 USER        "${UID}"
-ENTRYPOINT  [ "/init-db" ]
+ENTRYPOINT  [ "/entrypoint" ]
