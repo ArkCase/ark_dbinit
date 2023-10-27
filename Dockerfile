@@ -2,16 +2,17 @@
 # Basic Parameters
 #
 ARG PUBLIC_REGISTRY="public.ecr.aws"
-ARG BASE_REPO="arkcase/base"
-ARG BASE_TAG="8-02"
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.1.0"
-ARG BLD="02"
 ARG PKG="dbinit"
 ARG UID="0"
 
-FROM "${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_TAG}"
+ARG BASE_REPO="arkcase/base"
+ARG BASE_VER="8"
+ARG BASE_IMG="${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_VER}"
+
+FROM "${BASE_IMG}"
 
 #
 # Some important labels
