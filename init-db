@@ -3,8 +3,6 @@
 from abc import ABC, abstractmethod
 import argparse
 import base64
-import errno
-import json
 import logging
 import os
 import re
@@ -56,14 +54,14 @@ else:
 	parser.print_help()
 	exit(1)
 
-INIT_DB_STORE = "/dbinit"
+INIT_DB_STORE = "./dbinit"
 if args.store:
 	INIT_DB_STORE = args.store[0]
 elif ENV_INIT_DB_STORE in os.environ:
 	INIT_DB_STORE = os.environ[ENV_INIT_DB_STORE]
 logging.info(f"Using init store location at [{INIT_DB_STORE}]")
 
-INIT_DB_SECRETS = "/dbsecrets"
+INIT_DB_SECRETS = "./dbsecrets"
 if args.secrets:
 	INIT_DB_SECRETS = args.secrets[0]
 elif ENV_INIT_DB_SECRETS in os.environ:
@@ -89,7 +87,7 @@ elif ENV_INIT_DB_SHELL in os.environ:
 if INIT_DB_SHELL:
 	logging.info(f"Will output a shellscript to run the SQL script")
 
-	INIT_DB_SHELL_SOURCES = "/dbscripts"
+	INIT_DB_SHELL_SOURCES = "./dbscripts"
 	if args.shell_sources:
 		INIT_DB_SHELL_SOURCES = args.shell_sources[0]
 	elif ENV_INIT_DB_SHELL_SOURCES in os.environ:
@@ -171,7 +169,7 @@ class DBWrapper(object):
 		pass
 
 	@abstractmethod
-	def renderUserSQL(self, userName, userSpec):
+	def renderUserSQL(self, username, userSpec):
 		pass
 
 	@abstractmethod
@@ -215,18 +213,28 @@ class PSQL_Wrapper(DBWrapper):
 	def renderAdminPassword(self, adminSpec):
 		if "password" not in adminSpec:
 			return
-		password = getSecretPassword(adminSpec["password"])
+
+		username = self.adminUsername
+		if "username" in adminSpec:
+			username = getPasswordValue(adminSpec["username"])
+		password = getPasswordValue(adminSpec["password"])
+
+		safeUsername = self.safeDoubleQuote(username)
 		safePassword = self.safeSingleQuote(password)
 		self.output("")
-		self.output(f"-- BEGIN: set the root password to [{password}]")
-		self.output(f"ALTER USER postgres WITH PASSWORD {safePassword};")
-		self.output(f"-- END: set the root password")
+		self.output(f"-- BEGIN: set the {username} password to [{password}]")
+		self.output(f"ALTER USER {safeUsername} WITH PASSWORD {safePassword};")
+		self.output(f"-- END: set the {username} password")
 
-	def renderUserSQL(self, userName, userSpec):
-		if (type(userSpec) == dict) and ("password" in userSpec):
-			password = getSecretPassword(userSpec["password"])
-		else:
-			password = userName
+	def renderUserSQL(self, username, userSpec):
+		if (type(userSpec) != dict):
+			userSpec = { "username" : username, "password" : str(userSpec) }
+		
+		if ("username" in userSpec):
+			username = getPasswordValue(userSpec["username"])
+
+		if ("password" in userSpec):
+			password = getPasswordValue(userSpec["password"])
 
 		roles = []
 		if "roles" in userSpec:
@@ -243,7 +251,7 @@ class PSQL_Wrapper(DBWrapper):
 		roles = [s.strip().upper() for s in roles]
 
 		# Make the username/pw safe to include
-		safeUsername = self.safeDoubleQuote(userName)
+		safeUsername = self.safeDoubleQuote(username)
 		safePassword = self.safeSingleQuote(password)
 
 		# Remove the "password" role, if present
@@ -253,10 +261,11 @@ class PSQL_Wrapper(DBWrapper):
 		roles = [f"PASSWORD {safePassword}"] + roles
 
 		self.output("")
-		self.output(f"-- BEGIN: create the {userName} user")
+		self.output(f"-- BEGIN: create the {username} user")
 		self.output(f"DROP USER IF EXISTS {safeUsername};")
 		self.output(f"CREATE USER {safeUsername} {' '.join(roles)};")
-		self.output(f"-- END: creation of {userName} user")
+		self.output(f"-- END: creation of {username} user")
+		return username
 
 	def renderDatabaseSQL(self, dbName, dbSpec):
 		forceFlag = ""
@@ -380,6 +389,12 @@ class MySQL_Wrapper(DBWrapper):
 		if "password" not in adminSpec:
 			return
 
+		username = self.adminUsername
+		if "username" in adminSpec:
+			username = getPasswordValue(adminSpec["username"])
+
+		password = getPasswordValue(adminSpec["password"])
+
 		# Some containers set the root password via different
 		# means which may cause problems with this initializer.
 		# Because of those cases, we require an extra flag for the
@@ -391,16 +406,16 @@ class MySQL_Wrapper(DBWrapper):
 			if not f or ("true" != str(f).lower()):
 				return
 
-		password = getSecretPassword(adminSpec["password"])
+		safeUsername = self.safeSingleQuote(username)
 		safePassword = self.safeSingleQuote(password)
 		self.output("")
-		self.output(f"-- BEGIN: set the root password to [{password}]")
-		self.output(f"ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY {safePassword};")
-		self.output(f"ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY {safePassword};")
+		self.output(f"-- BEGIN: set the {username} password to [{password}]")
+		self.output(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
+		self.output(f"ALTER USER IF EXISTS {safeUsername}@'localhost' IDENTIFIED BY {safePassword};")
 		self.output("FLUSH PRIVILEGES;")
 		self.output(f"-- END: set the root password")
 
-	def renderUserSQL(self, userName, userSpec):
+	def renderUserSQL(self, username, userSpec):
 		hosts = []
 		if KEY_USER_HOSTS in userSpec:
 			hosts = userSpec[KEY_USER_HOSTS]
@@ -408,25 +423,30 @@ class MySQL_Wrapper(DBWrapper):
 				fail(f"The '{KEY_USER_HOSTS}' entries must be a list of strings")
 			hosts = [str(h) for h in hosts]
 
+		if (type(userSpec) != dict):
+			userSpec = { "username" : username, "password" : str(userSpec) }
+
 		if not hosts:
 			hosts = ["%"]
 
-		if (type(userSpec) == dict) and ("password" in userSpec):
-			password = getSecretPassword(userSpec["password"])
-		else:
-			password = userName
+		if "username" in userSpec:
+			username = getPasswordValue(userSpec["username"])
+		if "password" in userSpec:
+			password = getPasswordValue(userSpec["password"])
 
 		# Make the username/pw safe to include
+		safeUsername = self.safeSingleQuote(username)
 		safePassword = self.safeSingleQuote(password)
 
 		for host in hosts:
-			safeUsername = self.__quoteUser(f"{userName}@{host}")
+			safeUsername = self.__quoteUser(f"{username}@{host}")
 			self.output("")
-			self.output(f"-- BEGIN: create the {userName} user")
+			self.output(f"-- BEGIN: create the {username} user")
 			self.output(f"DROP USER IF EXISTS {safeUsername};")
 			self.output(f"CREATE USER {safeUsername} IDENTIFIED BY {safePassword};")
 		self.output("FLUSH PRIVILEGES;")
-		self.output(f"-- END: creation of {userName} user")
+		self.output(f"-- END: creation of {username} user")
+		return username
 
 	def renderDatabaseSQL(self, dbName, dbSpec):
 		self.output("")
@@ -489,21 +509,56 @@ class MySQL_Wrapper(DBWrapper):
 		self.output(query + ";")
 		self.output(f"-- END: run query on {dbLabel}")
 
-def getSecretPassword(spec, fallback = "12345"):
+def getPasswordValue(spec, fallback = None):
 	if spec is None:
 		return fallback
 
 	if type(spec) == str:
+		# If it's of the form @file:/..., then read the contents from that file
+		# If it's of the form @env:ENVVAR then read the contents from that envvar
+
+		# Otherwise, use the value verbatim
+		if spec.startswith("@file:"):
+			# read the contents of the file, return the default if it can't be read
+			p = os.path.expandvars(spec[6:])
+			try:
+				with open(p, "rt") as f:
+					return f.read()
+			except FileNotFoundError:
+				logging.error(f"The file [{p}] could not be found (from [{spec}])")
+				return fallback
+			except Exception as e:
+				fail(f"The file [{p}] could not be read (from [{spec}]): {e}")
+
+		if spec.startswith("@env:"):
+			try:
+				return os.environ[spec[5:]]
+			except KeyError:
+				return fallback
+
 		return spec
 
 	if type(spec) == dict:
 		if not (KEY_SECRET_KEY in spec):
 			fail(f"No '{KEY_SECRET_KEY}' was given to pull the password from")
+
 		secret = f"{INIT_DB_SECRETS}/{spec[KEY_SECRET_KEY]}"
 		if (not os.path.exists(secret)) or (not os.path.isfile(secret)):
 			fail(f"The secret '{secret}' is inaccessible")
+
 		with open(secret, "rt") as f:
 			return f.read()
+
+# This helps us keep track of usernames that need mapping
+USER_MAP = {}
+def mapUserName(username):
+	if username:
+		username = str(username)
+		try:
+			return USER_MAP[username]
+		except KeyError:
+			pass
+	return username
 
 def sanitizePrivileges(data, objType, objName):
 	if not data:
@@ -511,7 +566,7 @@ def sanitizePrivileges(data, objType, objName):
 
 	if type(data) == str:
 		# If it's a string, that's the user that owns it
-		return { data : [ "*" ] }
+		return { mapUserName(data) : [ "*" ] }
 
 	if type(data) == list:
 		privileges = {}
@@ -531,7 +586,7 @@ def sanitizePrivileges(data, objType, objName):
 		return {}
 
 	if type(privileges) == str:
-		return { privileges : [ "*" ] }
+		return { mapUserName(privileges) : [ "*" ] }
 
 	if type(privileges) == list:
 		newPrivileges = {}
@@ -612,7 +667,7 @@ with dbwrapperType() as dbwrapper:
 			fail("The 'admin' section must either be a string or a map")
 		dbwrapper.renderAdminPassword(admin)
 		if "password" in admin:
-			adminPassword = getSecretPassword(admin["password"])
+			adminPassword = getPasswordValue(admin["password"])
 
 	if "users" in data:
 		users = data["users"]
@@ -620,27 +675,29 @@ with dbwrapperType() as dbwrapper:
 			newUsers = {}
 			for u in users:
 				u = str(u)
-				newUsers[u] = { "password" : u }
+				newUsers[u] = { "username" : u, "password" : u }
 			users = newUsers
 		elif type(users) != dict:
 			users = str(users)
-			users = { users.strip() : { "password" : users } }
-		for userName, userData in data["users"].items():
+			users = { users.strip() : { "username" : users.strip(), "password" : users } }
+		for username, userData in users.items():
 			try:
-				dbwrapper.renderUserSQL(userName, userData)
+				newUsername = dbwrapper.renderUserSQL(username, userData)
+				if newUsername != username:
+					USER_MAP[username] = newUsername
 			except Exception as e:
-				print(f"Exception {e} while rendering [{userName}]: [{userData}]")
+				print(f"Exception {e} while rendering [{username}]: [{userData}]")
 				raise
 
 	if "databases" in data:
 		for db, dbData in data["databases"].items():
 			if type(dbData) == str:
 				# If it's a string, that's the user that owns it
-				dbData = { KEY_DB_PRIVILEGES : { dbData : [ "*" ] } }
+				dbData = { KEY_DB_PRIVILEGES : { mapUserName(username) : [ "*" ] } }
 			elif type(dbData) == list:
 				privileges = {}
 				for d in dbData:
-					privileges[str(d)] = [ "*" ]
+					privileges[mapUserName(str(d))] = [ "*" ]
 				dbData = { KEY_DB_PRIVILEGES : privileges }
 			elif type(dbData) == dict:
 				pass
