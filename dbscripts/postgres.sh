@@ -9,8 +9,6 @@ case "${PG_INITIALIZED,,}" in
 esac
 
 if "${INITIALIZED}" ; then
-	trap cleanup EXIT
-
 	SCRIPT="${1}"
 	ADMIN="${2}"
 	[ ${#} -lt 3 ] || PASS="${3}"
