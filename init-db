@@ -693,7 +693,7 @@ with dbwrapperType() as dbwrapper:
 		for db, dbData in data["databases"].items():
 			if type(dbData) == str:
 				# If it's a string, that's the user that owns it
-				dbData = { KEY_DB_PRIVILEGES : { mapUserName(username) : [ "*" ] } }
+				dbData = { KEY_DB_PRIVILEGES : { mapUserName(dbData) : [ "*" ] } }
 			elif type(dbData) == list:
 				privileges = {}
 				for d in dbData:
