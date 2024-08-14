@@ -54,14 +54,15 @@ else:
 	parser.print_help()
 	exit(1)
 
-INIT_DB_STORE = "/dbinit"
+INIT_DB_STORE = "/scripts/init.d"
 if args.store:
 	INIT_DB_STORE = args.store[0]
 elif ENV_INIT_DB_STORE in os.environ:
 	INIT_DB_STORE = os.environ[ENV_INIT_DB_STORE]
 logging.info(f"Using init store location at [{INIT_DB_STORE}]")
+os.makedirs(INIT_DB_STORE, mode=0o775, exist_ok=True)
 
-INIT_DB_SECRETS = "/dbsecrets"
+INIT_DB_SECRETS = "/secrets"
 if args.secrets:
 	INIT_DB_SECRETS = args.secrets[0]
 elif ENV_INIT_DB_SECRETS in os.environ:
@@ -87,7 +88,7 @@ elif ENV_INIT_DB_SHELL in os.environ:
 if INIT_DB_SHELL:
 	logging.info(f"Will output a shellscript to run the SQL script")
 
-	INIT_DB_SHELL_SOURCES = "/dbscripts"
+	INIT_DB_SHELL_SOURCES = "/sources"
 	if args.shell_sources:
 		INIT_DB_SHELL_SOURCES = args.shell_sources[0]
 	elif ENV_INIT_DB_SHELL_SOURCES in os.environ:
