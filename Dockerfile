@@ -43,7 +43,8 @@ RUN yum -y install epel-release && \
     yum -y clean all
 
 COPY entrypoint /
-COPY init-db /usr/local/bin/
+COPY boot-db init-db /usr/local/bin/
+RUN chmod u=rwx,go=rx /usr/local/bin/boot-db /usr/local/bin/init-db /entrypoint
 COPY sources/* /sources/
 
 #

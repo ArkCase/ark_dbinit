@@ -1,6 +1,10 @@
 #!/bin/bash
 
-[ -v SSL_DIR ] || SSL_DIR="/.ssl"
+set -euo pipefail
+
+[ -v SSL_DIR ] || SSL_DIR=""
+[ -n "${SSL_DIR}" ] || SSL_DIR="/.ssl"
 acme-init
 
-exec /usr/local/bin/init-db "${@}"
+init-db "${@}"
+boot-db "${@}"
