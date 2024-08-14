@@ -44,7 +44,7 @@ RUN yum -y install epel-release && \
 
 COPY entrypoint /
 COPY init-db /usr/local/bin/
-COPY dbscripts/* /dbscripts/
+COPY sources/* /sources/
 
 #
 # Final parameters
