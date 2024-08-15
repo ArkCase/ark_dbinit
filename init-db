@@ -458,10 +458,9 @@ class MySQL_Wrapper(DBWrapper):
 		# times you're 100% POSITIVE this is needed
 		if "force" not in adminSpec:
 			return
-		else:
-			f = adminSpec["force"]
-			if not f or ("true" != str(f).lower()):
-				return
+
+		if ("true" != str(adminSpec["force"]).lower()):
+			return
 
 		safeUsername = self.safeSingleQuote(username)
 		safePassword = self.safeSingleQuote(password)
