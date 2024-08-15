@@ -14,6 +14,9 @@ ARG BASE_IMG="${PUBLIC_REGISTRY}/${BASE_REPO}:${BASE_VER}"
 
 FROM "${BASE_IMG}"
 
+ARG VER
+ARG UID
+
 #
 # Some important labels
 #
@@ -23,8 +26,8 @@ LABEL APP="Database Initializer"
 LABEL VERSION="${VER}"
 LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_dbinit"
 
-ENV INIT_DB_STORE "/dbinit"
-ENV INIT_DB_SECRETS "/dbsecrets"
+ENV INIT_DB_STORE="/scripts"
+ENV INIT_DB_SECRETS="/secrets"
 
 #
 # Full update
@@ -43,8 +46,8 @@ RUN yum -y install epel-release && \
     yum -y clean all
 
 COPY entrypoint /
-COPY boot-db init-db /usr/local/bin/
-RUN chmod u=rwx,go=rx /usr/local/bin/boot-db /usr/local/bin/init-db /entrypoint
+COPY init-db /usr/local/bin/
+RUN chmod u=rwx,go=rx /usr/local/bin/init-db /entrypoint
 COPY sources/* /sources/
 
 #

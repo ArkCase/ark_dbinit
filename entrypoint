@@ -6,8 +6,4 @@ set -euo pipefail
 [ -n "${SSL_DIR}" ] || SSL_DIR="/.ssl"
 acme-init
 
-# Only run this in the event that it's needed
-[ -n "${INIT_DB_STORE:-}" ] && init-db "${@}"
-
-# Only run this in the event that it's needed
-[ -n "${BOOT_DB_STORE:-}" ] && boot-db "${@}"
+exec init-db "${@}"
