@@ -7,16 +7,18 @@ import logging
 import os
 import re
 import shutil
+import socket
 import sys
 import traceback
 import urllib.request
 import yaml
 
-TARGET_SCRIPT_NAME = "dbinit.runner"
+TARGET_SCRIPT_NAME = "dbscript.runner"
 
 ENV_INIT_DB_CONF = "INIT_DB_CONF"
 ENV_INIT_DB_TYPE = "INIT_DB_TYPE"
 ENV_INIT_DB_STORE = "INIT_DB_STORE"
+ENV_BOOT_DB_STORE = "BOOT_DB_STORE"
 ENV_INIT_DB_SECRETS = "INIT_DB_SECRETS"
 ENV_INIT_DB_SHELL_SOURCES = "INIT_DB_SHELL_SOURCES"
 ENV_INIT_DB_SHELL = "INIT_DB_SHELL"
@@ -24,7 +26,8 @@ ENV_INIT_DB_SHELL = "INIT_DB_SHELL"
 parser = argparse.ArgumentParser(description="Database Initialization Script Generator")
 parser.add_argument("config", metavar="config", action="store", help=f"The configuration to use (if not given, it will be read from the {ENV_INIT_DB_CONF} environment variable)", type=str, nargs="?")
 parser.add_argument("--db", metavar="db", action="store", help=f"The type of database to render the scripts for (if not given, it will be read from the {ENV_INIT_DB_TYPE} environment variable)", type=str, nargs=1)
-parser.add_argument("--store", metavar="store", action="store", help=f"The directory into which the script will be rendered (if not given, it will be read from the {ENV_INIT_DB_STORE} environment variable)", type=str, nargs=1)
+parser.add_argument("--store-init", metavar="store_init", action="store", help=f"The directory into which the init script will be rendered (if not given, it will be read from the {ENV_INIT_DB_STORE} environment variable)", type=str, nargs=1)
+parser.add_argument("--store-boot", metavar="store_boot", action="store", help=f"The directory into which the boot script will be rendered (if not given, it will be read from the {ENV_BOOT_DB_STORE} environment variable)", type=str, nargs=1)
 parser.add_argument("--secrets", metavar="secrets", action="store", help=f"The directory under which all required secrets may be found (if not given, it will be read from the {ENV_INIT_DB_SECRETS} environment variable)", type=str, nargs=1)
 parser.add_argument("--shell", action="store_true", help=f"When set, causes a small shellscript to be output which will run the generated script (if not given, it will be read from the {ENV_INIT_DB_SHELL} environment variable)", default=False)
 parser.add_argument("--shell-sources", metavar="shell_sources", action="store", help=f"The directory under which all script templates are kept (ignored when --shell is not given, if not given, it will be read from the {ENV_INIT_DB_SHELL_SOURCES} environment variable)", type=str, nargs=1)
@@ -55,12 +58,20 @@ else:
 	exit(1)
 
 INIT_DB_STORE = "/scripts/init.d"
-if args.store:
-	INIT_DB_STORE = args.store[0]
+if args.store_init:
+	INIT_DB_STORE = args.store_init[0]
 elif ENV_INIT_DB_STORE in os.environ:
 	INIT_DB_STORE = os.environ[ENV_INIT_DB_STORE]
 logging.info(f"Using init store location at [{INIT_DB_STORE}]")
 os.makedirs(INIT_DB_STORE, mode=0o775, exist_ok=True)
+
+BOOT_DB_STORE = "/scripts/boot.d"
+if args.store_boot:
+	BOOT_DB_STORE = args.store_boot[0]
+elif ENV_BOOT_DB_STORE in os.environ:
+	BOOT_DB_STORE = os.environ[ENV_BOOT_DB_STORE]
+logging.info(f"Using init store location at [{BOOT_DB_STORE}]")
+os.makedirs(BOOT_DB_STORE, mode=0o775, exist_ok=True)
 
 INIT_DB_SECRETS = "/secrets"
 if args.secrets:
@@ -95,6 +106,8 @@ if INIT_DB_SHELL:
 		INIT_DB_SHELL_SOURCES = os.environ[ENV_INIT_DB_SHELL_SOURCES]
 	logging.info(f"Using shell script sources location at [{INIT_DB_SHELL_SOURCES}]")
 
+POD_NAME = socket.gethostname().split(".")[0]
+
 KEY_SECRET_KEY = "secretKey"
 KEY_USER_HOSTS = "hosts"
 KEY_DB_CHARSET = "charset"
@@ -115,7 +128,9 @@ class DBWrapper(object):
 		if not (self.__aliases):
 			fail("Must provide at least one alias for the database")
 
-		self.__output = None
+		self.__scriptName = f"000-{self.__aliases[0]}.sql"
+		self.__initFile = None
+		self.__bootFile = None
 
 	def __enter__(self):
 		self.open()
@@ -127,28 +142,61 @@ class DBWrapper(object):
 		finally:
 			if exc_type and exc_value:
 				try:
-					os.remove(self.__path)
+					os.remove(self.__initPath)
 				except:
 					pass
 
 	def open(self):
-		if self.__output:
-			raise Exception("The output stream is already open")
+		if not self.__initFile:
+			self.__initPath = f"{INIT_DB_STORE}/{self.__scriptName}"
+			try:
+				self.__initFile = open(self.__initPath, "wt")
+				logging.info(f"Opened the output file at [{self.__initPath}]")
+			except Exception as e:
+				fail(f"Failed to create the target file at [{self.__initPath}]:\n{traceback.format_exc()}")
 
-		self.__path = f"{INIT_DB_STORE}/000-{self.__aliases[0]}-database-init-script.sql"
-		try:
-			self.__output = open(self.__path, "wt")
-			logging.info(f"Opened the output file at [{self.__path}]")
-		except Exception as e:
-			fail(f"Failed to create the target file at [{self.__path}]:\n{traceback.format_exc()}")
+		if not self.__bootFile:
+			self.__bootPath = f"{BOOT_DB_STORE}/{self.__scriptName}"
+			try:
+				self.__bootFile = open(self.__bootPath, "wt")
+				logging.info(f"Opened the output file at [{self.__bootPath}]")
+			except Exception as e:
+				fail(f"Failed to create the target file at [{self.__bootPath}]:\n{traceback.format_exc()}")
 
-	def getPath(self):
-		return self.__path
+	def getScriptName(self):
+		return self.__scriptName
 
-	def output(self, string):
-		# Write out to the output file
-		print(f"OUT: {string}")
-		print(string, file=self.__output)
+	def __output(self, target, label, string):
+		print(f"{label.upper()} OUT: {string}")
+		print(string, file=target)
+
+	def initOutput(self, string):
+		self.__output(self.__initFile, "init", string)
+
+	def bootOutput(self, string):
+		self.__output(self.__bootFile, "boot", string)
+
+	def allOutput(self, string):
+		self.initOutput(string)
+		self.bootOutput(string)
+
+	def isValidPhase(self, phase):
+		if "init" == phase:
+			return True
+		if "boot" == phase:
+			return True
+		if "all" == phase:
+			return True
+		return False
+
+	def getOutputFor(self, phase):
+		if "init" == phase:
+			return lambda string : self.initOutput(string)
+		if "boot" == phase:
+			return lambda string : self.bootOutput(string)
+		if "all" == phase:
+			return lambda string : self.allOutput(string)
+		fail(f"Unrecognized phase [{phase}]")
 
 	def getName(self):
 		return self.__aliases[0]
@@ -182,7 +230,7 @@ class DBWrapper(object):
 		pass
 
 	@abstractmethod
-	def renderQuerySQL(self, db, user, query):
+	def renderQuerySQL(self, phase, db, user, query):
 		pass
 
 	def safeSingleQuote(self, s):
@@ -192,13 +240,19 @@ class DBWrapper(object):
 		return f"'{s}'"
 
 	def close(self):
-		if not self.__output:
-			return
-		try:
-			logging.info(f"Closing the output file at [{self.__path}]")
-			self.__output.close()
-		finally:
-			self.__output = None
+		if self.__initFile:
+			try:
+				logging.info(f"Closing the output file at [{self.__initPath}]")
+				self.__initFile.close()
+			finally:
+				self.__initFile = None
+
+		if self.__bootFile:
+			try:
+				logging.info(f"Closing the output file at [{self.__bootPath}]")
+				self.__bootFile.close()
+			finally:
+				self.__bootFile = None
 
 class PSQL_Wrapper(DBWrapper):
 
@@ -222,10 +276,10 @@ class PSQL_Wrapper(DBWrapper):
 
 		safeUsername = self.safeDoubleQuote(username)
 		safePassword = self.safeSingleQuote(password)
-		self.output("")
-		self.output(f"-- BEGIN: set the {username} password to [{password}]")
-		self.output(f"ALTER USER {safeUsername} WITH PASSWORD {safePassword};")
-		self.output(f"-- END: set the {username} password")
+		self.allOutput("")
+		self.allOutput(f"-- BEGIN: set the {username} password to [{password}]")
+		self.allOutput(f"ALTER USER {safeUsername} WITH PASSWORD {safePassword};")
+		self.allOutput(f"-- END: set the {username} password")
 
 	def renderUserSQL(self, username, userSpec):
 		if (type(userSpec) != dict):
@@ -261,11 +315,12 @@ class PSQL_Wrapper(DBWrapper):
 		# Pre-pend the password role with the value we want
 		roles = [f"PASSWORD {safePassword}"] + roles
 
-		self.output("")
-		self.output(f"-- BEGIN: create the {username} user")
-		self.output(f"DROP USER IF EXISTS {safeUsername};")
-		self.output(f"CREATE USER {safeUsername} {' '.join(roles)};")
-		self.output(f"-- END: creation of {username} user")
+		self.initOutput("")
+		self.initOutput(f"-- BEGIN: create the {username} user")
+		self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
+		self.initOutput(f"CREATE USER {safeUsername} {' '.join(roles)};")
+		self.bootOutput(f"ALTER USER {safeUsername} WITH PASSWORD {safePassword};")
+		self.initOutput(f"-- END: creation of {username} user")
 		return username
 
 	def renderDatabaseSQL(self, dbName, dbSpec):
@@ -273,10 +328,10 @@ class PSQL_Wrapper(DBWrapper):
 		if ("force" in dbSpec) and (bool(dbSpec["force"])):
 			forceFlag = "FORCE"
 
-		self.output("")
-		self.output(f"-- BEGIN: create the {dbName} database")
+		self.initOutput("")
+		self.initOutput(f"-- BEGIN: create the {dbName} database")
 		safeDbName = self.safeDoubleQuote(dbName)
-		self.output(f"DROP DATABASE IF EXISTS {safeDbName} {forceFlag};")
+		self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName} {forceFlag};")
 
 		owner = None
 		ownerSpec = ""
@@ -303,14 +358,14 @@ class PSQL_Wrapper(DBWrapper):
 
 		flagSpec = list(filter(lambda r: r.upper().find("OWNER") < 0, flagSpec))
 
-		self.output(f"CREATE DATABASE {safeDbName} {ownerSpec} {' '.join(flagSpec)};")
+		self.initOutput(f"CREATE DATABASE {safeDbName} {ownerSpec} {' '.join(flagSpec)};")
 
 		if KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
 					u = self.safeDoubleQuote(str(u))
-					self.output("GRANT")
+					self.allOutput("GRANT")
 					comma = ","
 					# Take a shortcut
 					if "*" in p:
@@ -321,43 +376,44 @@ class PSQL_Wrapper(DBWrapper):
 						i += 1
 						if (i >= m):
 							comma = ""
-						self.output(f"\t{pv}{comma}")
-					self.output(f"ON DATABASE {safeDbName} TO {u};")
+						self.allOutput(f"\t{pv}{comma}")
+					self.allOutput(f"ON DATABASE {safeDbName} TO {u};")
 
 		# We do this last in case specific privileges were granted above
 		if owner:
-			self.output(f"GRANT ALL ON DATABASE {safeDbName} TO {owner} WITH GRANT OPTION;")
+			self.allOutput(f"GRANT ALL ON DATABASE {safeDbName} TO {owner} WITH GRANT OPTION;")
 
-		self.output(f"-- END: creation of the database {dbName}")
+		self.initOutput(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
-		self.output("")
-		self.output(f"-- BEGIN: create the {dbName}.{schemaName} schema")
-		self.output(f"\c {self.safeDoubleQuote(dbName)}")
-		self.output(f"CREATE SCHEMA IF NOT EXISTS {self.safeDoubleQuote(schemaName)};")
-		self.output(f"-- END: creation of the {dbName}.{schemaName} schema")
+		self.initOutput("")
+		self.initOutput(f"-- BEGIN: create the {dbName}.{schemaName} schema")
+		self.initOutput(f"\c {self.safeDoubleQuote(dbName)}")
+		self.initOutput(f"CREATE SCHEMA IF NOT EXISTS {self.safeDoubleQuote(schemaName)};")
+		self.initOutput(f"-- END: creation of the {dbName}.{schemaName} schema")
 
-	def renderQuerySQL(self, db, user, query):
+	def renderQuerySQL(self, phase, db, user, query):
+		out = self.getOutputFor(phase)
 		dbLabel = db
 		if not db:
 			dbLabel = "<current-database>"
 		userLabel = user
 		if not user:
 			userLabel = "<current-user>"
-		self.output(f"-- BEGIN: run query on {dbLabel} as {userLabel}")
+		out(f"-- BEGIN: run query on {dbLabel} as {userLabel}")
 
 		if user:
-			self.output(f"SET SESSION AUTHORIZATION {self.safeDoubleQuote(user)};")
+			out(f"SET SESSION AUTHORIZATION {self.safeDoubleQuote(user)};")
 
 		if db:
-			self.output(f"\c {self.safeDoubleQuote(db)}")
+			out(f"\c {self.safeDoubleQuote(db)}")
 
-		self.output(query + ";")
+		self.__output(target, label, query + ";")
 
 		if user:
-			self.output("RESET SESSION AUTHORIZATION;")
+			self.__output(target, label, "RESET SESSION AUTHORIZATION;")
 
-		self.output(f"-- END: run query on {dbLabel}")
+		out(f"-- END: run query on {dbLabel}")
 
 class MySQL_Wrapper(DBWrapper):
 
@@ -409,12 +465,15 @@ class MySQL_Wrapper(DBWrapper):
 
 		safeUsername = self.safeSingleQuote(username)
 		safePassword = self.safeSingleQuote(password)
-		self.output("")
-		self.output(f"-- BEGIN: set the {username} password to [{password}]")
-		self.output(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
-		self.output(f"ALTER USER IF EXISTS {safeUsername}@'localhost' IDENTIFIED BY {safePassword};")
-		self.output("FLUSH PRIVILEGES;")
-		self.output(f"-- END: set the root password")
+		self.allOutput("")
+		self.allOutput(f"-- BEGIN: set the {username} password to [{password}]")
+		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
+		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'::1' IDENTIFIED BY {safePassword};")
+		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'127.0.0.1' IDENTIFIED BY {safePassword};")
+		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'localhost' IDENTIFIED BY {safePassword};")
+		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'{POD_NAME}' IDENTIFIED BY {safePassword};")
+		self.allOutput("FLUSH PRIVILEGES;")
+		self.allOutput(f"-- END: set the root password")
 
 	def renderUserSQL(self, username, userSpec):
 		hosts = []
@@ -441,19 +500,20 @@ class MySQL_Wrapper(DBWrapper):
 
 		for host in hosts:
 			safeUsername = self.__quoteUser(f"{username}@{host}")
-			self.output("")
-			self.output(f"-- BEGIN: create the {username} user")
-			self.output(f"DROP USER IF EXISTS {safeUsername};")
-			self.output(f"CREATE USER {safeUsername} IDENTIFIED BY {safePassword};")
-		self.output("FLUSH PRIVILEGES;")
-		self.output(f"-- END: creation of {username} user")
+			self.initOutput("")
+			self.initOutput(f"-- BEGIN: create the {username} user")
+			self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
+			self.initOutput(f"CREATE USER {safeUsername} IDENTIFIED BY {safePassword};")
+			self.bootOutput(f"ALTER USER IF EXISTS {safeUsername} IDENTIFIED BY {safePassword};")
+		self.allOutput("FLUSH PRIVILEGES;")
+		self.initOutput(f"-- END: creation of {username} user")
 		return username
 
 	def renderDatabaseSQL(self, dbName, dbSpec):
-		self.output("")
-		self.output(f"-- BEGIN: create the {dbName} database")
+		self.initOutput("")
+		self.initOutput(f"-- BEGIN: create the {dbName} database")
 		safeDbName = self.__quoteDbName(dbName)
-		self.output(f"DROP DATABASE IF EXISTS {safeDbName};")
+		self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName};")
 
 		charsetSpec = ""
 		if KEY_DB_CHARSET in dbSpec:
@@ -473,14 +533,14 @@ class MySQL_Wrapper(DBWrapper):
 		if commentSpec:
 			collateSpec = f"COMMENT {self.safeSingleQuote(commentSpec)}"
 
-		self.output(f"CREATE DATABASE {safeDbName} {charsetSpec} {collateSpec} {commentSpec};")
+		self.initOutput(f"CREATE DATABASE {safeDbName} {charsetSpec} {collateSpec} {commentSpec};")
 
 		if KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
 					u = self.__quoteUser(str(u))
-					self.output("GRANT")
+					self.allOutput("GRANT")
 					comma = ","
 					# Take a shortcut
 					if "*" in p:
@@ -491,24 +551,25 @@ class MySQL_Wrapper(DBWrapper):
 						i += 1
 						if (i >= m):
 							comma = ""
-						self.output(f"\t{pv}{comma}")
-					self.output(f"ON {safeDbName}.* TO {u};")
-				self.output("FLUSH PRIVILEGES;")
-		self.output(f"-- END: creation of the database {dbName}")
+						self.allOutput(f"\t{pv}{comma}")
+					self.allOutput(f"ON {safeDbName}.* TO {u};")
+				self.allOutput("FLUSH PRIVILEGES;")
+		self.initOutput(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
-		self.output("-- schemas aren't supported in MySQL/MariaDB")
+		self.initOutput("-- schemas aren't supported in MySQL/MariaDB")
 
-	def renderQuerySQL(self, db, user, query):
+	def renderQuerySQL(self, phase, db, user, query):
+		out = self.getOutputFor(phase)
 		dbLabel = db
 		if not db:
 			dbLabel = "<current-database>"
-		self.output(f"-- BEGIN: run query on {dbLabel}")
+		out(f"-- BEGIN: run query on {dbLabel}")
 
 		if db:
-			self.output(f"USE {self.__quoteDbName(db)};")
-		self.output(query + ";")
-		self.output(f"-- END: run query on {dbLabel}")
+			out(f"USE {self.__quoteDbName(db)};")
+		self.__output(target, label, query + ";")
+		out(f"-- END: run query on {dbLabel}")
 
 def getPasswordValue(spec, fallback = None):
 	if spec is None:
@@ -646,7 +707,7 @@ if data is None:
 
 logging.info(f"Rendering the script for {INIT_DB_TYPE}...")
 dbwrapperType = MAPPERS[dbType]
-scriptPath = None
+scriptName = None
 adminPassword = ""
 with dbwrapperType() as dbwrapper:
 	adminUsername = dbwrapper.getAdminUsername()
@@ -654,7 +715,7 @@ with dbwrapperType() as dbwrapper:
 	logging.info(f"The database type is actually {dbType}...")
 
 	if INIT_DB_SHELL:
-		scriptPath = dbwrapper.getPath()
+		scriptName = dbwrapper.getScriptName()
 
 		scriptSource = f"{INIT_DB_SHELL_SOURCES}/{dbType}.sh"
 		if (not os.path.exists(scriptSource)) or (not os.path.isfile(scriptSource)):
@@ -736,72 +797,85 @@ with dbwrapperType() as dbwrapper:
 					dbwrapper.renderDatabaseSchemaSQL(db, schema, schemaSpec)
 
 	if "scripts" in data:
-		scripts = data["scripts"]
-		if not scripts:
-			scripts = []
-		elif type(scripts) == dict:
-			scripts = scripts.values()
-		elif type(scripts) != list:
-			fail(f"The 'scripts' data structure must be a list or a map")
+		scriptData = data["scripts"]
+		if (not scriptData) or (type(scriptData) != dict):
+			scriptData = {}
 
-		for script in scripts:
-			if not script:
+		for phase, scripts in scriptData.items():
+
+			if not dbwrapper.isValidPhase(phase):
+				logging.error(f"Invalid script phase [{phase}], skipping")
 				continue
-			elif type(script) == str:
-				script = { "query" : script }
 
-			if "onlyFor" in script:
-				onlyFor = script["onlyFor"]
-				if type(onlyFor) == str:
-					onlyFor = [ onlyFor ]
-				elif type(onlyFor) == list:
-					onlyFor = [str(v) for v in onlyFor]
-				elif onlyFor:
-					fail(f"The 'onlyFor' declaration for script # {p} is invalid ({type(onlyFor)})")
-				if onlyFor and (not dbwrapper.isCompatible(onlyFor)):
+			if not scripts:
+				continue
+
+			if type(scripts) == dict:
+				scripts = scripts.values()
+
+			if (type(scripts) != list) and (type(scripts) != set):
+				logging.error(f"The value for scripts.{phase} may not be of type {type(scripts)}")
+				continue
+
+			for script in scripts:
+				if not script:
 					continue
 
-			query = None
-			if "query" in script:
-				source = script["query"]
-				sourceType = "inline"
-				query = script["query"]
-			else:
-				source = None
-				sourceType = None
-				stream = None
-				try:
-					if "file" in script:
-						source = script["file"]
-						sourceType = "file"
-						with open(script["file"], "rt") as s:
-							query = s.read();
-					elif "url" in script:
-						source = script["url"]
-						sourceType = "url"
-						encoding = "utf-8"
-						if ("encoding" in script) and (script["encoding"]):
-							encoding = str(script["encoding"])
-						with urllib.request.urlopen(script["url"]) as u:
-							query = u.read().decode(encoding)
-				except Exception as e:
-					fail(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
+				elif type(script) == str:
+					script = { "query" : script }
 
-			if query is None:
-				logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
-				continue
+				if "onlyFor" in script:
+					onlyFor = script["onlyFor"]
+					if type(onlyFor) == str:
+						onlyFor = [ onlyFor ]
+					elif type(onlyFor) == list:
+						onlyFor = [str(v) for v in onlyFor]
+					elif onlyFor:
+						fail(f"The 'onlyFor' declaration for script # {p} is invalid ({type(onlyFor)})")
+					if onlyFor and (not dbwrapper.isCompatible(onlyFor)):
+						continue
 
-			db = None
-			if "db" in script:
-				db = str(script["db"])
+				query = None
+				if "query" in script:
+					source = script["query"]
+					sourceType = "inline"
+					query = script["query"]
+				else:
+					source = None
+					sourceType = None
+					stream = None
+					try:
+						if "file" in script:
+							source = script["file"]
+							sourceType = "file"
+							with open(script["file"], "rt") as s:
+								query = s.read();
+						elif "url" in script:
+							source = script["url"]
+							sourceType = "url"
+							encoding = "utf-8"
+							if ("encoding" in script) and (script["encoding"]):
+								encoding = str(script["encoding"])
+							with urllib.request.urlopen(script["url"]) as u:
+								query = u.read().decode(encoding)
+					except Exception as e:
+						fail(f"The {sourceType} [{source}] could not be read for use as a SQL script, aborting!\n{traceback.format_exc()}")
 
-			user = None
-			if "user" in script:
-				user = str(script["user"])
+				if query is None:
+					logging.warning("Found a script entry which lacks a query/file/url specification, skipping!")
+					continue
 
-			dbwrapper.renderQuerySQL(db, user, query)
+				db = None
+				if "db" in script:
+					db = str(script["db"])
 
-if INIT_DB_SHELL and scriptPath:
+				user = None
+				if "user" in script:
+					user = str(script["user"])
+
+				dbwrapper.renderQuerySQL(db, phase, user, query)
+
+if INIT_DB_SHELL and scriptName:
 	# Render/copy the script
 	# For safety, the admin password is given base64-encoded
 	if adminPassword:
@@ -809,28 +883,29 @@ if INIT_DB_SHELL and scriptPath:
 		adminPassword = base64.b64encode(adminPassword)
 		adminPassword = adminPassword.decode("ascii")
 
-	# Copy the DB-specific script as dbinit.runner
-	scriptTarget = f"{INIT_DB_STORE}/{TARGET_SCRIPT_NAME}"
-	logging.info(f"Copying the template script from [{scriptSource}] into [{scriptTarget}]")
-	shutil.copyfile(scriptSource, scriptTarget)
-	# Make the script executable, just in case
-	os.chmod(scriptTarget, 0o755)
+	for targetDir in [ INIT_DB_STORE, BOOT_DB_STORE ]:
+		# Copy the DB-specific script as dbscript.runner
+		scriptTarget = f"{targetDir}/{TARGET_SCRIPT_NAME}"
+		logging.info(f"Copying the template script from [{scriptSource}] into [{scriptTarget}]")
+		shutil.copyfile(scriptSource, scriptTarget)
+		# Make the script executable, just in case
+		os.chmod(scriptTarget, 0o755)
 
-	# Render this out to the INIT_DB_STORE directory
-	content = f"""\
+		# Render this out to the INIT_DB_STORE directory
+		content = f"""\
 #!/bin/bash
 SCRIPT="$(readlink -f "${{BASH_SOURCE:-${0}}}")"
 BASEDIR="$(dirname "${{SCRIPT}}")"
 cd "${{BASEDIR}}"
-source "./{TARGET_SCRIPT_NAME}" "{os.path.basename(scriptPath)}" {adminUsername} {adminPassword}\
+source "./{TARGET_SCRIPT_NAME}" "{scriptName}" {adminUsername} {adminPassword}\
 """
 
-	logging.info("Rendering the initializer script...")
-	renderedScript = f"{INIT_DB_STORE}/000-dbinit.sh"
-	with open(renderedScript, "wt") as script:
-		script.write(content)
-	# Make the script executable, just in case
-	os.chmod(renderedScript, 0o755)
+		renderedScript = f"{targetDir}/000-db.sh"
+		logging.info(f"Rendering the initializer script as [{renderedScript}]...")
+		with open(renderedScript, "wt") as script:
+			script.write(content)
+		# Make the script executable, just in case
+		os.chmod(renderedScript, 0o755)
 
 # TA-DAAAA!! We're done... now let the original container's startup script do its thing ...
 exit(0)
