@@ -876,7 +876,7 @@ with dbwrapperType() as dbwrapper:
 				if "user" in script:
 					user = str(script["user"])
 
-				dbwrapper.renderQuerySQL(db, phase, user, query)
+				dbwrapper.renderQuerySQL(phase, db, user, query)
 
 if INIT_DB_SHELL and scriptName:
 	# Render/copy the script
