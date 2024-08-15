@@ -106,8 +106,6 @@ if INIT_DB_SHELL:
 		INIT_DB_SHELL_SOURCES = os.environ[ENV_INIT_DB_SHELL_SOURCES]
 	logging.info(f"Using shell script sources location at [{INIT_DB_SHELL_SOURCES}]")
 
-POD_NAME = socket.gethostname().split(".")[0]
-
 KEY_SECRET_KEY = "secretKey"
 KEY_USER_HOSTS = "hosts"
 KEY_DB_CHARSET = "charset"
@@ -452,6 +450,15 @@ class MySQL_Wrapper(DBWrapper):
 
 		password = getPasswordValue(adminSpec["password"])
 
+		safeUsername = self.safeSingleQuote(username)
+		safePassword = self.safeSingleQuote(password)
+
+		self.bootOutput("")
+		self.bootOutput(f"-- BEGIN: set the {username} password to [{password}]")
+		self.bootOutput(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
+		self.bootOutput("FLUSH PRIVILEGES;")
+		self.bootOutput(f"-- END: set the root password")
+
 		# Some containers set the root password via different
 		# means which may cause problems with this initializer.
 		# Because of those cases, we require an extra flag for the
@@ -462,17 +469,11 @@ class MySQL_Wrapper(DBWrapper):
 		if ("true" != str(adminSpec["force"]).lower()):
 			return
 
-		safeUsername = self.safeSingleQuote(username)
-		safePassword = self.safeSingleQuote(password)
-		self.allOutput("")
-		self.allOutput(f"-- BEGIN: set the {username} password to [{password}]")
-		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
-		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'::1' IDENTIFIED BY {safePassword};")
-		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'127.0.0.1' IDENTIFIED BY {safePassword};")
-		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'localhost' IDENTIFIED BY {safePassword};")
-		self.allOutput(f"ALTER USER IF EXISTS {safeUsername}@'{POD_NAME}' IDENTIFIED BY {safePassword};")
-		self.allOutput("FLUSH PRIVILEGES;")
-		self.allOutput(f"-- END: set the root password")
+		self.initOutput("")
+		self.initOutput(f"-- BEGIN: set the {username} password to [{password}]")
+		self.initOutput(f"ALTER USER IF EXISTS {safeUsername}@'%' IDENTIFIED BY {safePassword};")
+		self.initOutput("FLUSH PRIVILEGES;")
+		self.initOutput(f"-- END: set the root password")
 
 	def renderUserSQL(self, username, userSpec):
 		hosts = []
