@@ -45,3 +45,34 @@ users:
   pentaho-quartz:
     username: "@env:DB_PENTAHO_QUARTZ_USERNAME"
     password: "@env:DB_PENTAHO_QUARTZ_PASSWORD"
+
+scripts:
+  boot:
+    - user: "@env:DB_ARKCASE_USERNAME"
+      db: "arkcase"
+      query: |
+        --
+        -- Fix directory names for users
+        --
+        update acm_user
+           set cm_user_directory_name = 'portal'
+         where cm_user_directory_name = 'foiaportal';
+
+        update acm_user
+           set cm_user_directory_name = 'arkcase'
+         where cm_user_directory_name != 'foiaportal'
+           and cm_user_directory_name != ''
+           and cm_user_directory_name is not null;
+
+        --
+        -- Fix directory names for groups
+        --
+        update acm_group
+           set cm_directory_name = 'portal'
+         where cm_directory_name = 'foiaportal';
+
+        update acm_group
+           set cm_directory_name = 'arkcase'
+         where cm_directory_name != 'foiaportal'
+           and cm_directory_name != ''
+           and cm_directory_name is not null;
