@@ -401,15 +401,17 @@ class PSQL_Wrapper(DBWrapper):
 		out(f"-- BEGIN: run query on {dbLabel} as {userLabel}")
 
 		if user:
+			user = getPasswordValue(user)
 			out(f"SET SESSION AUTHORIZATION {self.safeDoubleQuote(user)};")
 
 		if db:
+			db = getPasswordValue(db)
 			out(f"\c {self.safeDoubleQuote(db)}")
 
-		self.__output(target, label, query + ";")
+		out(query + ";")
 
 		if user:
-			self.__output(target, label, "RESET SESSION AUTHORIZATION;")
+			out("RESET SESSION AUTHORIZATION;")
 
 		out(f"-- END: run query on {dbLabel}")
 
@@ -567,8 +569,9 @@ class MySQL_Wrapper(DBWrapper):
 		out(f"-- BEGIN: run query on {dbLabel}")
 
 		if db:
+			db = getPasswordValue(db)
 			out(f"USE {self.__quoteDbName(db)};")
-		self.__output(target, label, query + ";")
+		out(query + ";")
 		out(f"-- END: run query on {dbLabel}")
 
 def getPasswordValue(spec, fallback = None):

@@ -36,24 +36,26 @@ databases:
   triadia:
 
 scripts:
-  - b
-  - file: "Dockerfile"
-    onlyFor: psql
-  - query: kkck
-    user: someUser
-  - url: http://localhost
-    encoding: UTF-8
-    onlyFor: mysql
+  boot:
+    - b
+    - file: "Dockerfile"
+      onlyFor: psql
+    - query: kkck
+      user: someUser
+    - url: http://localhost
+      encoding: UTF-8
+      onlyFor: mysql
 
 # The more complete syntax
 scriptsTwo:
-  - query: example query
-    user: user (default admin)
-    db: db-or-schema-name
-    onlyFor:
-      - psql
-  - file: only-for-mariadb
-    user: user (default admin)
-    db: db-or-schema-name
-    onlyFor:
-      - mariadb
+  init:
+    - query: example query
+      user: user (default admin)
+      db: db-or-schema-name
+      onlyFor:
+        - psql
+    - file: only-for-mariadb
+      user: user (default admin)
+      db: db-or-schema-name
+      onlyFor:
+        - mariadb

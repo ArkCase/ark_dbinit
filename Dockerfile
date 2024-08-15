@@ -4,7 +4,7 @@
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="1.1.0"
+ARG VER="1.2.0"
 ARG PKG="dbinit"
 ARG UID="0"
 
