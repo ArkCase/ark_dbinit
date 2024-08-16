@@ -1,9 +1,13 @@
+#!/bin/bash
+BASEDIR="$(readlink -f "$(dirname "${0}")")"
+
 [ -d t ] || mkdir t
 T="$(readlink -f "t")"
 export INIT_DB_STORE="${T}/scripts/init.d"
 export BOOT_DB_STORE="${T}/scripts/boot.d"
 export INIT_DB_SECRETS="${T}/secrets"
 export INIT_DB_SHELL_SOURCES="$(readlink -f sources)"
+export INIT_DB_SHELL="true"
 
 export DB_ADMIN_USERNAME="Da-Bawzz"
 export DB_ADMIN_PASSWORD="ADMIN PASS"
@@ -17,3 +21,5 @@ export DB_PENTAHO_JCR_USERNAME="pEnTaHo-JcR-uSeR"
 export DB_PENTAHO_JCR_PASSWORD="Pentaho JCR Password"
 export DB_PENTAHO_QUARTZ_USERNAME="pEnTaHo-QuArTz-UsEr"
 export DB_PENTAHO_QUARTZ_PASSWORD="Pentaho Quartz Password"
+
+exec "${BASEDIR}/init-db" "${@}"
