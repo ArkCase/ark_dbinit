@@ -87,8 +87,8 @@ INIT_DB_STORE = read_config_value(args, "store_init", ENV_INIT_DB_STORE, "/scrip
 logging.info(f"Using init store location at [{INIT_DB_STORE}]")
 os.makedirs(INIT_DB_STORE, mode=0o775, exist_ok=True)
 
-BOOT_DB_STORE = read_config_value(args, "store_boot", ENV_INIT_DB_STORE, "/scripts/boot.d")
-logging.info(f"Using init store location at [{BOOT_DB_STORE}]")
+BOOT_DB_STORE = read_config_value(args, "store_boot", ENV_BOOT_DB_STORE, "/scripts/boot.d")
+logging.info(f"Using boot store location at [{BOOT_DB_STORE}]")
 os.makedirs(BOOT_DB_STORE, mode=0o775, exist_ok=True)
 
 INIT_DB_SECRETS = read_config_value(args, "secrets", ENV_INIT_DB_SECRETS, "/secrets")
