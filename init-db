@@ -22,6 +22,8 @@ ENV_BOOT_DB_STORE = "BOOT_DB_STORE"
 ENV_INIT_DB_SECRETS = "INIT_DB_SECRETS"
 ENV_INIT_DB_SHELL_SOURCES = "INIT_DB_SHELL_SOURCES"
 ENV_INIT_DB_SHELL = "INIT_DB_SHELL"
+ENV_INIT_DB_DROP_USERS = "INIT_DB_DROP_USERS"
+ENV_INIT_DB_DROP_DATABASES = "INIT_DB_DROP_DATABASES"
 
 parser = argparse.ArgumentParser(description="Database Initialization Script Generator")
 parser.add_argument("config", metavar="config", action="store", help=f"The configuration to use (if not given, it will be read from the {ENV_INIT_DB_CONF} environment variable)", type=str, nargs="?")
@@ -29,8 +31,10 @@ parser.add_argument("--db", metavar="db", action="store", help=f"The type of dat
 parser.add_argument("--store-init", metavar="store_init", action="store", help=f"The directory into which the init script will be rendered (if not given, it will be read from the {ENV_INIT_DB_STORE} environment variable)", type=str, nargs=1)
 parser.add_argument("--store-boot", metavar="store_boot", action="store", help=f"The directory into which the boot script will be rendered (if not given, it will be read from the {ENV_BOOT_DB_STORE} environment variable)", type=str, nargs=1)
 parser.add_argument("--secrets", metavar="secrets", action="store", help=f"The directory under which all required secrets may be found (if not given, it will be read from the {ENV_INIT_DB_SECRETS} environment variable)", type=str, nargs=1)
-parser.add_argument("--shell", action="store_true", help=f"When set, causes a small shellscript to be output which will run the generated script (if not given, it will be read from the {ENV_INIT_DB_SHELL} environment variable)", default=False)
+parser.add_argument("--shell", action="store_const", const=True, help=f"When set, causes a small shellscript to be output which will run the generated script (if not given, it will be read from the {ENV_INIT_DB_SHELL} environment variable)", default=False)
 parser.add_argument("--shell-sources", metavar="shell_sources", action="store", help=f"The directory under which all script templates are kept (ignored when --shell is not given, if not given, it will be read from the {ENV_INIT_DB_SHELL_SOURCES} environment variable)", type=str, nargs=1)
+parser.add_argument("--drop-users", action="store_const", const=True, help=f"When set, will cause a DROP USER statement (or equivalent) to be created before any user creation is attempted (if not given, it will be read from the {ENV_INIT_DB_DROP_USERS} environment variable)", default=False)
+parser.add_argument("--drop-databases", action="store_const", const=True, help=f"When set, will cause a DROP DATABASE statement (or equivalent) to be created before any database creation is attempted (if not given, it will be read from the {ENV_INIT_DB_DROP_DATABASES} environment variable)", default=False)
 
 args = parser.parse_args()
 
@@ -39,6 +43,28 @@ logging.basicConfig(level=logging.INFO, format = '%(asctime)s - %(levelname)s - 
 def fail(msg):
 	logging.error(msg)
 	exit(1)
+
+def to_boolean(v):
+	if not v:
+		return False
+
+	return ("true" == str(v).lower())
+
+def read_config_value(args, argName, envName, default = None):
+	if args and argName and hasattr(args, argName):
+		v = getattr(args, argName)
+
+		if v is not None:
+			if type(v) == list:
+				v = v[0]
+			return str(v)
+
+	if envName and envName in os.environ:
+		v = os.environ[envName]
+		if v:
+			return str(v)
+
+	return default
 
 if args.config:
 	# If the parameter is given, use it
@@ -57,54 +83,32 @@ else:
 	parser.print_help()
 	exit(1)
 
-INIT_DB_STORE = "/scripts/init.d"
-if args.store_init:
-	INIT_DB_STORE = args.store_init[0]
-elif ENV_INIT_DB_STORE in os.environ:
-	INIT_DB_STORE = os.environ[ENV_INIT_DB_STORE]
+INIT_DB_STORE = read_config_value(args, "store_init", ENV_INIT_DB_STORE, "/scripts/init.d")
 logging.info(f"Using init store location at [{INIT_DB_STORE}]")
 os.makedirs(INIT_DB_STORE, mode=0o775, exist_ok=True)
 
-BOOT_DB_STORE = "/scripts/boot.d"
-if args.store_boot:
-	BOOT_DB_STORE = args.store_boot[0]
-elif ENV_BOOT_DB_STORE in os.environ:
-	BOOT_DB_STORE = os.environ[ENV_BOOT_DB_STORE]
+BOOT_DB_STORE = read_config_value(args, "store_boot", ENV_INIT_DB_STORE, "/scripts/boot.d")
 logging.info(f"Using init store location at [{BOOT_DB_STORE}]")
 os.makedirs(BOOT_DB_STORE, mode=0o775, exist_ok=True)
 
-INIT_DB_SECRETS = "/secrets"
-if args.secrets:
-	INIT_DB_SECRETS = args.secrets[0]
-elif ENV_INIT_DB_SECRETS in os.environ:
-	INIT_DB_SECRETS = os.environ[ENV_INIT_DB_SECRETS]
+INIT_DB_SECRETS = read_config_value(args, "secrets", ENV_INIT_DB_SECRETS, "/secrets")
 logging.info(f"Using secrets location at [{INIT_DB_SECRETS}]")
 
-INIT_DB_TYPE = None
-if args.db:
-	INIT_DB_TYPE = args.db[0]
-elif ENV_INIT_DB_TYPE in os.environ:
-	INIT_DB_TYPE = os.environ[ENV_INIT_DB_TYPE]
-
+INIT_DB_TYPE = read_config_value(args, "db", ENV_INIT_DB_TYPE)
 if not INIT_DB_TYPE:
 	logging.error("No DB type has been specified, cannot continue")
 	parser.print_help()
 	exit(1)
 
-INIT_DB_SHELL = False
-if args.shell:
-	INIT_DB_SHELL = args.shell
-elif ENV_INIT_DB_SHELL in os.environ:
-	INIT_DB_SHELL = bool(os.environ[ENV_INIT_DB_SHELL])
+INIT_DB_SHELL = to_boolean(read_config_value(args, "shell", ENV_INIT_DB_SHELL, False))
 if INIT_DB_SHELL:
 	logging.info(f"Will output a shellscript to run the SQL script")
 
-	INIT_DB_SHELL_SOURCES = "/sources"
-	if args.shell_sources:
-		INIT_DB_SHELL_SOURCES = args.shell_sources[0]
-	elif ENV_INIT_DB_SHELL_SOURCES in os.environ:
-		INIT_DB_SHELL_SOURCES = os.environ[ENV_INIT_DB_SHELL_SOURCES]
+	INIT_DB_SHELL_SOURCES = read_config_value(args, "shell_sources", ENV_INIT_DB_SHELL_SOURCES, "/sources")
 	logging.info(f"Using shell script sources location at [{INIT_DB_SHELL_SOURCES}]")
+
+INIT_DB_DROP_USERS = to_boolean(read_config_value(args, "drop_users", ENV_INIT_DB_DROP_USERS, False))
+INIT_DB_DROP_DATABASES = to_boolean(read_config_value(args, "drop_databases", ENV_INIT_DB_DROP_DATABASES, False))
 
 KEY_SECRET_KEY = "secretKey"
 KEY_USER_HOSTS = "hosts"
@@ -315,7 +319,8 @@ class PSQL_Wrapper(DBWrapper):
 
 		self.initOutput("")
 		self.initOutput(f"-- BEGIN: create the {username} user")
-		self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
+		if INIT_DB_DROP_USERS:
+			self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
 		self.initOutput(f"CREATE USER {safeUsername} {' '.join(roles)};")
 		self.bootOutput(f"ALTER USER {safeUsername} WITH PASSWORD {safePassword};")
 		self.initOutput(f"-- END: creation of {username} user")
@@ -329,7 +334,8 @@ class PSQL_Wrapper(DBWrapper):
 		self.initOutput("")
 		self.initOutput(f"-- BEGIN: create the {dbName} database")
 		safeDbName = self.safeDoubleQuote(dbName)
-		self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName} {forceFlag};")
+		if INIT_DB_DROP_DATABASES:
+			self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName} {forceFlag};")
 
 		owner = None
 		ownerSpec = ""
@@ -504,7 +510,8 @@ class MySQL_Wrapper(DBWrapper):
 			safeUsername = self.__quoteUser(f"{username}@{host}")
 			self.initOutput("")
 			self.initOutput(f"-- BEGIN: create the {username} user")
-			self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
+			if INIT_DB_DROP_USERS:
+				self.initOutput(f"DROP USER IF EXISTS {safeUsername};")
 			self.initOutput(f"CREATE USER {safeUsername} IDENTIFIED BY {safePassword};")
 			self.bootOutput(f"ALTER USER IF EXISTS {safeUsername} IDENTIFIED BY {safePassword};")
 		self.allOutput("FLUSH PRIVILEGES;")
@@ -515,7 +522,8 @@ class MySQL_Wrapper(DBWrapper):
 		self.initOutput("")
 		self.initOutput(f"-- BEGIN: create the {dbName} database")
 		safeDbName = self.__quoteDbName(dbName)
-		self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName};")
+		if INIT_DB_DROP_DATABASES:
+			self.initOutput(f"DROP DATABASE IF EXISTS {safeDbName};")
 
 		charsetSpec = ""
 		if KEY_DB_CHARSET in dbSpec:
