@@ -1,9 +1,8 @@
 #!/bin/bash
 
 set -euo pipefail
+. /.functions
 
-[ -v SSL_DIR ] || SSL_DIR=""
-[ -n "${SSL_DIR}" ] || SSL_DIR="/.ssl"
-acme-init
+init_ssl
 
-exec init-db "${@}"
+execute init-db "${@}"
