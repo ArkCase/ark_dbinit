@@ -832,7 +832,7 @@ with dbwrapperType() as dbwrapper:
 				if not script:
 					continue
 
-				elif type(script) == str:
+				if type(script) == str:
 					script = { "query" : script }
 
 				if "onlyFor" in script:
