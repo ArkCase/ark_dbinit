@@ -6,7 +6,7 @@ ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="1.2.0"
 ARG PKG="dbinit"
-ARG UID="0"
+ARG APP_UID="0"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
@@ -17,7 +17,7 @@ ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}:${BASE_VER_PFX}${BASE_VER}"
 FROM "${BASE_IMG}"
 
 ARG VER
-ARG UID
+ARG APP_UID
 
 #
 # Some important labels
@@ -39,5 +39,5 @@ COPY --chown=root:root --chmod=0755 sources/* /sources/
 # Final parameters
 #
 WORKDIR     /
-USER        "${UID}"
+USER        "${APP_UID}"
 ENTRYPOINT  [ "/entrypoint" ]
