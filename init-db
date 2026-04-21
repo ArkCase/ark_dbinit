@@ -386,6 +386,7 @@ class PSQL_Wrapper(DBWrapper):
 		# We do this last in case specific privileges were granted above
 		if owner:
 			self.allOutput(f"GRANT ALL ON DATABASE {safeDbName} TO {owner} WITH GRANT OPTION;")
+			self.allOutput(f"GRANT ALL ON SCHEMA public TO {owner} WITH GRANT OPTION;")
 
 		self.initOutput(f"-- END: creation of the database {dbName}")
 
