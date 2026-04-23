@@ -554,7 +554,7 @@ class MySQL_Wrapper(DBWrapper):
 
 		if owner:
 			u = self.__quoteUser(owner)
-			self.allOutput(f"GRANT ALL ON DATABASE {safeDbName}.* TO {u} WITH GRANT OPTION;")
+			self.allOutput(f"GRANT ALL PRIVILEGES ON {safeDbName}.* TO {u} WITH GRANT OPTION;")
 			self.allOutput("FLUSH PRIVILEGES;")
 
 		elif KEY_DB_PRIVILEGES in dbSpec:
