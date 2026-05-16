@@ -116,6 +116,7 @@ KEY_DB_CHARSET = "charset"
 KEY_DB_COLLATE = "collate"
 KEY_DB_COMMENT = "comment"
 KEY_DB_PRIVILEGES = "privileges"
+KEY_DB_OWNER = "owner"
 
 class DBWrapper(object):
 
@@ -339,8 +340,8 @@ class PSQL_Wrapper(DBWrapper):
 
 		owner = None
 		ownerSpec = ""
-		if ("owner" in dbSpec) and (dbSpec["owner"]):
-			owner = dbSpec["owner"]
+		if (KEY_DB_OWNER in dbSpec) and (dbSpec[KEY_DB_OWNER]):
+			owner = dbSpec[KEY_DB_OWNER]
 			if type(owner) != str:
 				fail(f"The owner clause for database {dbName} must be a string with the owner's name ({type(owner)})")
 			owner = self.safeDoubleQuote(owner)
@@ -364,7 +365,12 @@ class PSQL_Wrapper(DBWrapper):
 
 		self.initOutput(f"CREATE DATABASE {safeDbName} {ownerSpec} {' '.join(flagSpec)};")
 
-		if KEY_DB_PRIVILEGES in dbSpec:
+		# If this is the owner, just grant everything
+		if owner:
+			self.allOutput(f"GRANT ALL ON DATABASE {safeDbName} TO {owner} WITH GRANT OPTION;")
+			self.allOutput(f"GRANT ALL ON SCHEMA public TO {owner} WITH GRANT OPTION;")
+		elif KEY_DB_PRIVILEGES in dbSpec:
+			# Not the owner? Apply any privileges ...
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
@@ -382,11 +388,6 @@ class PSQL_Wrapper(DBWrapper):
 							comma = ""
 						self.allOutput(f"\t{pv}{comma}")
 					self.allOutput(f"ON DATABASE {safeDbName} TO {u};")
-
-		# We do this last in case specific privileges were granted above
-		if owner:
-			self.allOutput(f"GRANT ALL ON DATABASE {safeDbName} TO {owner} WITH GRANT OPTION;")
-
 		self.initOutput(f"-- END: creation of the database {dbName}")
 
 	def renderDatabaseSchemaSQL(self, dbName, schemaName, schemaSpec):
@@ -545,7 +546,18 @@ class MySQL_Wrapper(DBWrapper):
 
 		self.initOutput(f"CREATE DATABASE {safeDbName} {charsetSpec} {collateSpec} {commentSpec};")
 
-		if KEY_DB_PRIVILEGES in dbSpec:
+		owner = None
+		if (KEY_DB_OWNER in dbSpec) and (dbSpec[KEY_DB_OWNER]):
+			owner = dbSpec[KEY_DB_OWNER]
+			if type(owner) != str:
+				fail(f"The owner clause for database {dbName} must be a string with the owner's name ({type(owner)})")
+
+		if owner:
+			u = self.__quoteUser(owner)
+			self.allOutput(f"GRANT ALL PRIVILEGES ON {safeDbName}.* TO {u} WITH GRANT OPTION;")
+			self.allOutput("FLUSH PRIVILEGES;")
+
+		elif KEY_DB_PRIVILEGES in dbSpec:
 			privileges = dbSpec[KEY_DB_PRIVILEGES]
 			if privileges:
 				for u, p in privileges.items():
@@ -766,7 +778,7 @@ with dbwrapperType() as dbwrapper:
 		for db, dbData in data["databases"].items():
 			if type(dbData) == str:
 				# If it's a string, that's the user that owns it
-				dbData = { KEY_DB_PRIVILEGES : { mapUserName(dbData) : [ "*" ] } }
+				dbData = { KEY_DB_OWNER : dbData, KEY_DB_PRIVILEGES : { mapUserName(dbData) : [ "*" ] } }
 			elif type(dbData) == list:
 				privileges = {}
 				for d in dbData:
