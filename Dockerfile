@@ -42,4 +42,3 @@ RUN --mount=type=bind,target=/src \
 #
 WORKDIR     /
 USER        "${APP_UID}"
-ENTRYPOINT  [ "/entrypoint" ]
