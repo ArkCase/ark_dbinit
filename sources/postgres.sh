@@ -8,15 +8,15 @@ ADMIN="${2}"
 [ ${#} -lt 3 ] || PASS="${3}"
 
 # For postgres, we shouldn't need the admin password ... but just in case
-if [ -n "${PASS}" ] ; then
+if [ -n "${PASS:-}" ] ; then
 	export PGPASSFILE="$(mktemp)"
-	base64 -d <<< "${PASS}" > "${PGPASSFILE}"
+	printf '*:*:*:*:%s\n' "$(base64 -d <<< "${PASS}" | sed -e 's/[\\:]/\\&/g')" > "${PGPASSFILE}"
 fi
 
 echo "Running the script [${SCRIPT}] as [${ADMIN}] ..."
 (
-	psql -U "${ADMIN}" -f "${SCRIPT}"
-	RC=${?}
-	[ -z "${PGPASSFILE}" ] || rm -rf "${PGPASSFILE}" &>/dev/null
-	exit ${?}
+	RC="0"
+	psql -U "${ADMIN}" -f "${SCRIPT}" || RC="${?}"
+	[ -z "${PGPASSFILE:-}" ] || rm -f "${PGPASSFILE}" &>/dev/null
+	exit "${RC}"
 )

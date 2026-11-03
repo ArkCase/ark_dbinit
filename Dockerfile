@@ -32,9 +32,10 @@ LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_dbinit"
 ENV INIT_DB_STORE="/scripts"
 ENV INIT_DB_SECRETS="/secrets"
 
-COPY --chown=root:root --chmod=0755 entrypoint /
-COPY --chown=root:root --chmod=0755 init-db /usr/local/bin/
-COPY --chown=root:root --chmod=0755 sources/* /sources/
+RUN --mount=type=bind,target=/src \
+    install -o root -o root -m 0755 /src/entrypoint /usr/local/bin && \
+    mkdir -p /sources && \
+    ( tar --owner=root --group=root --mode=u=rwX,g=rX -cf - /src/sources ) | tar --strip-components=2 -C /sources -xvf -
 
 #
 # Final parameters
