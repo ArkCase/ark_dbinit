@@ -31,11 +31,11 @@ LABEL IMAGE_SOURCE="https://github.com/ArkCase/ark_dbinit"
 
 ENV INIT_DB_STORE="/scripts"
 ENV INIT_DB_SECRETS="/secrets"
+ENV ENTRYPOINT="/usr/local/bin/init-db"
 
 RUN --mount=type=bind,target=/src \
-    install -o root -o root -m 0755 /src/entrypoint /usr/local/bin && \
-    mkdir -p /sources && \
-    ( tar --owner=root --group=root --mode=u=rwX,g=rX -cf - /src/sources ) | tar --strip-components=2 -C /sources -xvf -
+    install -o root -g root -m 0755 /src/init-db /usr/local/bin && \
+    install -D -o root -g root -m 0755 -t /sources /src/sources/*
 
 #
 # Final parameters
